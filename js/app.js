@@ -48,7 +48,7 @@
         var os = JSON.parse(old);
         var g = newGroupObj('My group');
         g.players = (os.players || []).map(function (p) {
-          return { id: p.id || uid(), name: p.name, skill: p.skill, present: p.present !== false, guest: !!p.guest };
+          return { id: p.id || uid(), name: p.name, skill: p.skill, present: p.present !== false };
         });
         g.config = {
           courts: (os.config && os.config.courts) || 2,
@@ -72,7 +72,7 @@
       if (g.config.games === undefined) g.config.games = 10;
       g.games = g.games || [];
       g.players = (g.players || []).map(function (p) {
-        return { id: p.id || uid(), name: p.name, skill: p.skill || 2, present: p.present !== false, guest: !!p.guest };
+        return { id: p.id || uid(), name: p.name, skill: p.skill || 2, present: p.present !== false };
       });
     });
     if (!s.groups.some(function (g) { return g.id === s.activeGroupId; })) {
@@ -209,7 +209,6 @@
       name: name,
       skill: parseInt($('#player-skill').value, 10),
       present: true,
-      guest: $('#player-guest').checked,
     });
     $('#player-name').value = '';
     $('#player-name').focus();
@@ -224,7 +223,6 @@
     var players = group().players;
     list.innerHTML = '';
     $('#player-empty').style.display = players.length ? 'none' : 'block';
-    $('#btn-remove-guests').hidden = !players.some(function (p) { return p.guest; });
 
     players.forEach(function (p) {
       var li = el('li');
@@ -241,10 +239,6 @@
       });
 
       var name = el('span', 'p-name' + (p.present ? '' : ' absent'), p.name);
-      if (p.guest) {
-        name.appendChild(document.createTextNode(' '));
-        name.appendChild(el('span', 'guest-badge', 'guest'));
-      }
 
       var skill = el('select', 'mini-select');
       [1, 2, 3].forEach(function (s) {
@@ -275,18 +269,6 @@
       list.appendChild(li);
     });
   }
-
-  $('#btn-remove-guests').addEventListener('click', function () {
-    var guests = group().players.filter(function (p) { return p.guest; });
-    if (!guests.length) return;
-    if (!confirm('Remove ' + guests.length + ' guest' + (guests.length > 1 ? 's' : '') + ' from this group?')) return;
-    group().players = group().players.filter(function (p) { return !p.guest; });
-    save();
-    renderPlayers();
-    renderCapacityHint();
-    renderGroupSelect();
-    toast('Guests removed');
-  });
 
   // ---------- setup: config ----------
   $('#cfg-courts').addEventListener('change', function () {
@@ -573,7 +555,7 @@
     var payload = {
       v: 1,
       n: g.name || '',
-      p: g.players.map(function (p) { return [p.name, p.skill, p.present ? 1 : 0, p.guest ? 1 : 0]; }),
+      p: g.players.map(function (p) { return [p.name, p.skill, p.present ? 1 : 0]; }),
       c: [g.config.courts, g.config.mode === 'level' ? 'l' : 's'],
       g: (g.games || []).map(function (game) {
         return {
@@ -590,7 +572,7 @@
     var payload = JSON.parse(fromB64(b64));
     if (!payload || !Array.isArray(payload.p)) return null;
     var players = payload.p.map(function (a, i) {
-      return { id: 'p' + i, name: String(a[0]), skill: a[1] || 2, present: a[2] !== 0, guest: a[3] === 1 };
+      return { id: 'p' + i, name: String(a[0]), skill: a[1] || 2, present: a[2] !== 0 };
     });
     function byIndex(i) { return players[i] ? players[i].id : players[0].id; }
     return {
