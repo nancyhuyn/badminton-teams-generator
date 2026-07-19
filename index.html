@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f766e" />
+    <title>Badminton Team Generator</title>
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>🏸 Badminton Teams</h1>
+      <nav class="tabs" id="tabs">
+        <button class="tab active" data-view="setup">Setup</button>
+        <button class="tab" data-view="session">Session</button>
+        <button class="tab" data-view="stats">Stats</button>
+      </nav>
+    </header>
+
+    <div id="share-banner" class="banner" hidden>
+      <span class="banner-text">You're viewing a <strong>shared roster</strong>.</span>
+      <span class="banner-actions">
+        <button id="btn-save-copy" class="btn btn-primary btn-sm">Save a copy</button>
+        <button id="btn-exit-shared" class="btn btn-ghost btn-sm">Exit</button>
+      </span>
+    </div>
+
+    <main>
+      <!-- ============ SETUP ============ -->
+      <section id="view-setup" class="view active">
+        <div class="card group-card">
+          <div class="field">
+            <span>Group</span>
+            <select id="group-select" aria-label="Active group"></select>
+          </div>
+          <div class="group-actions">
+            <button id="btn-new-group" class="btn btn-ghost small">+ New</button>
+            <button id="btn-rename-group" class="btn btn-ghost small">Rename</button>
+            <button id="btn-delete-group" class="btn btn-ghost small">Delete</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Players</h2>
+            <button id="btn-remove-guests" class="btn btn-ghost small" hidden>Remove guests</button>
+          </div>
+          <form id="add-player-form" class="add-player">
+            <div class="add-row">
+              <input id="player-name" type="text" placeholder="Add a player…" autocomplete="off" />
+              <select id="player-skill" aria-label="Skill level">
+                <option value="1">Beginner</option>
+                <option value="2" selected>Intermediate</option>
+                <option value="3">Advanced</option>
+              </select>
+              <button type="submit" class="btn btn-primary">Add</button>
+            </div>
+            <label class="guest-check">
+              <input type="checkbox" id="player-guest" /> Add as guest (temporary — easy to clear later)
+            </label>
+          </form>
+          <ul id="player-list" class="player-list"></ul>
+          <p id="player-empty" class="muted">No players yet. Add a few to get started.</p>
+        </div>
+
+        <div class="card">
+          <h2>Session settings</h2>
+          <label class="field">
+            <span>Courts</span>
+            <input id="cfg-courts" type="number" min="1" max="6" value="2" />
+          </label>
+          <label class="field">
+            <span>Games to generate</span>
+            <input id="cfg-games" type="number" min="1" max="30" value="10" />
+          </label>
+          <label class="field">
+            <span>Balancing mode</span>
+            <select id="cfg-mode">
+              <option value="spread" selected>Spread strong (mixed teams)</option>
+              <option value="level">Level-based (competitive)</option>
+            </select>
+          </label>
+          <p id="capacity-hint" class="muted"></p>
+        </div>
+
+        <div class="card actions-card">
+          <button id="btn-generate" class="btn btn-primary btn-block">Generate full session</button>
+          <button id="btn-newsession" class="btn btn-ghost btn-block">New session (clear schedule, keep players)</button>
+        </div>
+      </section>
+
+      <!-- ============ SESSION ============ -->
+      <section id="view-session" class="view">
+        <div class="session-toolbar">
+          <button id="btn-next" class="btn btn-primary">+ Next game</button>
+          <button id="btn-generate-2" class="btn btn-ghost">Regenerate all</button>
+        </div>
+        <div class="session-toolbar">
+          <button id="btn-share" class="btn btn-ghost">📤 Share roster</button>
+          <button id="btn-copylink" class="btn btn-ghost">🔗 Copy link</button>
+        </div>
+        <div id="games-container"></div>
+        <p id="session-empty" class="muted">
+          No games yet. Use <strong>Generate full session</strong> on the Setup tab, or
+          <strong>Next game</strong> above.
+        </p>
+      </section>
+
+      <!-- ============ STATS ============ -->
+      <section id="view-stats" class="view">
+        <div class="card">
+          <h2>Games &amp; sit-outs</h2>
+          <div id="stats-players" class="stats-table-wrap"></div>
+        </div>
+        <div class="card">
+          <h2>Partnership matrix</h2>
+          <p class="muted">How many times each pair has been teammates. Aim for an even, mostly-1 grid.</p>
+          <div id="stats-matrix" class="stats-table-wrap"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="js/generator.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>

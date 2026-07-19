@@ -1,0 +1,754 @@
+/*
+ * UI controller. Owns app state, persists to localStorage, and renders the
+ * three views. All team-forming logic lives in generator.js (BadmintonGen).
+ *
+ * State model (v2): the app holds a list of named GROUPS (saved rosters you
+ * play with repeatedly). Each group carries its own players, settings, and
+ * current schedule, so switching groups swaps the whole view. One group is
+ * active at a time. Older single-session saves are migrated in automatically.
+ */
+(function () {
+  'use strict';
+
+  var STORAGE_KEY = 'badminton-app-v2';
+  var OLD_KEY = 'badminton-session-v1';
+  var SKILL_LABEL = { 1: 'Beginner', 2: 'Intermediate', 3: 'Advanced' };
+
+  // ---------- state ----------
+  var state = loadState();
+
+  function defaultConfig() {
+    return { courts: 2, mode: 'spread', games: 10 };
+  }
+  function newGroupObj(name) {
+    return { id: gid(), name: name, players: [], config: defaultConfig(), games: [] };
+  }
+  function gid() {
+    return 'g' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
+  }
+  function uid() {
+    return 'p' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
+  }
+
+  function loadState() {
+    // Preferred: the v2 multi-group store.
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        var s = JSON.parse(raw);
+        if (s && s.groups && s.groups.length) return normalize(s);
+      }
+    } catch (e) {
+      /* fall through */
+    }
+    // Migrate a legacy single session into a "My group".
+    try {
+      var old = localStorage.getItem(OLD_KEY);
+      if (old) {
+        var os = JSON.parse(old);
+        var g = newGroupObj('My group');
+        g.players = (os.players || []).map(function (p) {
+          return { id: p.id || uid(), name: p.name, skill: p.skill, present: p.present !== false, guest: !!p.guest };
+        });
+        g.config = {
+          courts: (os.config && os.config.courts) || 2,
+          mode: (os.config && os.config.mode) || 'spread',
+          games: 10,
+        };
+        g.games = os.games || [];
+        return { groups: [g], activeGroupId: g.id };
+      }
+    } catch (e) {
+      /* fall through */
+    }
+    var g0 = newGroupObj('My group');
+    return { groups: [g0], activeGroupId: g0.id };
+  }
+
+  // Backfill any missing fields so older/partial data renders safely.
+  function normalize(s) {
+    s.groups.forEach(function (g) {
+      g.config = g.config || defaultConfig();
+      if (g.config.games === undefined) g.config.games = 10;
+      g.games = g.games || [];
+      g.players = (g.players || []).map(function (p) {
+        return { id: p.id || uid(), name: p.name, skill: p.skill || 2, present: p.present !== false, guest: !!p.guest };
+      });
+    });
+    if (!s.groups.some(function (g) { return g.id === s.activeGroupId; })) {
+      s.activeGroupId = s.groups[0].id;
+    }
+    return s;
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      /* private mode / quota — app still works in-memory */
+    }
+  }
+
+  // The active group is the working object every view reads from. Its shape
+  // ({players, config, games}) is exactly what BadmintonGen.generateGame wants.
+  function group() {
+    return state.groups.find(function (g) { return g.id === state.activeGroupId; }) || state.groups[0];
+  }
+  function nameOf(id) {
+    var p = group().players.find(function (x) { return x.id === id; });
+    return p ? p.name : '?';
+  }
+
+  // ---------- $ helpers ----------
+  function $(sel) {
+    return document.querySelector(sel);
+  }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  var toastTimer;
+  function toast(msg) {
+    var t = $('#toast') || (function () {
+      var d = el('div', 'toast');
+      d.id = 'toast';
+      document.body.appendChild(d);
+      return d;
+    })();
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      t.classList.remove('show');
+    }, 1900);
+  }
+
+  // ---------- navigation ----------
+  $('#tabs').addEventListener('click', function (e) {
+    var btn = e.target.closest('.tab');
+    if (!btn) return;
+    showView(btn.dataset.view);
+  });
+  function showView(name) {
+    document.querySelectorAll('.tab').forEach(function (t) {
+      t.classList.toggle('active', t.dataset.view === name);
+    });
+    document.querySelectorAll('.view').forEach(function (v) {
+      v.classList.toggle('active', v.id === 'view-' + name);
+    });
+    if (name === 'stats') renderStats();
+    if (name === 'session') renderSession();
+  }
+
+  // ---------- groups ----------
+  function renderGroupSelect() {
+    var sel = $('#group-select');
+    sel.innerHTML = '';
+    state.groups.forEach(function (g) {
+      var o = el('option', null, g.name + ' (' + g.players.length + ')');
+      o.value = g.id;
+      if (g.id === state.activeGroupId) o.selected = true;
+      sel.appendChild(o);
+    });
+    // Can't delete your only group.
+    $('#btn-delete-group').disabled = state.groups.length <= 1;
+  }
+
+  function switchGroup(id) {
+    state.activeGroupId = id;
+    save();
+    refreshAll();
+  }
+
+  $('#group-select').addEventListener('change', function () {
+    switchGroup(this.value);
+  });
+  $('#btn-new-group').addEventListener('click', function () {
+    var name = (prompt('Name this group (e.g. "Sunday crew"):') || '').trim();
+    if (!name) return;
+    var g = newGroupObj(name);
+    state.groups.push(g);
+    state.activeGroupId = g.id;
+    save();
+    refreshAll();
+    toast('Created "' + name + '"');
+  });
+  $('#btn-rename-group').addEventListener('click', function () {
+    var g = group();
+    var name = (prompt('Rename group:', g.name) || '').trim();
+    if (!name) return;
+    g.name = name;
+    save();
+    renderGroupSelect();
+    toast('Renamed');
+  });
+  $('#btn-delete-group').addEventListener('click', function () {
+    if (state.groups.length <= 1) {
+      toast("Can't delete your only group.");
+      return;
+    }
+    var g = group();
+    if (!confirm('Delete group "' + g.name + '" and its schedule? This cannot be undone.')) return;
+    state.groups = state.groups.filter(function (x) { return x.id !== g.id; });
+    state.activeGroupId = state.groups[0].id;
+    save();
+    refreshAll();
+    toast('Deleted "' + g.name + '"');
+  });
+
+  // ---------- setup: players ----------
+  $('#add-player-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var name = $('#player-name').value.trim();
+    if (!name) return;
+    group().players.push({
+      id: uid(),
+      name: name,
+      skill: parseInt($('#player-skill').value, 10),
+      present: true,
+      guest: $('#player-guest').checked,
+    });
+    $('#player-name').value = '';
+    $('#player-name').focus();
+    save();
+    renderPlayers();
+    renderCapacityHint();
+    renderGroupSelect(); // player count in the label
+  });
+
+  function renderPlayers() {
+    var list = $('#player-list');
+    var players = group().players;
+    list.innerHTML = '';
+    $('#player-empty').style.display = players.length ? 'none' : 'block';
+    $('#btn-remove-guests').hidden = !players.some(function (p) { return p.guest; });
+
+    players.forEach(function (p) {
+      var li = el('li');
+
+      var chk = el('input', 'present-toggle');
+      chk.type = 'checkbox';
+      chk.checked = p.present;
+      chk.title = 'Present this session';
+      chk.addEventListener('change', function () {
+        p.present = chk.checked;
+        save();
+        renderPlayers();
+        renderCapacityHint();
+      });
+
+      var name = el('span', 'p-name' + (p.present ? '' : ' absent'), p.name);
+      if (p.guest) {
+        name.appendChild(document.createTextNode(' '));
+        name.appendChild(el('span', 'guest-badge', 'guest'));
+      }
+
+      var skill = el('select', 'mini-select');
+      [1, 2, 3].forEach(function (s) {
+        var o = el('option', null, SKILL_LABEL[s]);
+        o.value = s;
+        if (s === p.skill) o.selected = true;
+        skill.appendChild(o);
+      });
+      skill.addEventListener('change', function () {
+        p.skill = parseInt(skill.value, 10);
+        save();
+      });
+
+      var del = el('button', 'icon-btn', '✕');
+      del.title = 'Remove player';
+      del.addEventListener('click', function () {
+        group().players = group().players.filter(function (x) { return x.id !== p.id; });
+        save();
+        renderPlayers();
+        renderCapacityHint();
+        renderGroupSelect();
+      });
+
+      li.appendChild(chk);
+      li.appendChild(name);
+      li.appendChild(skill);
+      li.appendChild(del);
+      list.appendChild(li);
+    });
+  }
+
+  $('#btn-remove-guests').addEventListener('click', function () {
+    var guests = group().players.filter(function (p) { return p.guest; });
+    if (!guests.length) return;
+    if (!confirm('Remove ' + guests.length + ' guest' + (guests.length > 1 ? 's' : '') + ' from this group?')) return;
+    group().players = group().players.filter(function (p) { return !p.guest; });
+    save();
+    renderPlayers();
+    renderCapacityHint();
+    renderGroupSelect();
+    toast('Guests removed');
+  });
+
+  // ---------- setup: config ----------
+  $('#cfg-courts').addEventListener('change', function () {
+    group().config.courts = clampInt(this.value, 1, 6, 2);
+    this.value = group().config.courts;
+    save();
+    renderCapacityHint();
+  });
+  $('#cfg-games').addEventListener('change', function () {
+    group().config.games = clampInt(this.value, 1, 30, 10);
+    this.value = group().config.games;
+    save();
+  });
+  $('#cfg-mode').addEventListener('change', function () {
+    group().config.mode = this.value;
+    save();
+  });
+  function clampInt(v, min, max, dflt) {
+    var n = parseInt(v, 10);
+    if (isNaN(n)) return dflt;
+    return Math.max(min, Math.min(max, n));
+  }
+
+  function presentCount() {
+    return group().players.filter(function (p) { return p.present; }).length;
+  }
+  function renderCapacityHint() {
+    var n = presentCount();
+    var courts = group().config.courts;
+    var hint = $('#capacity-hint');
+    if (n < 4) {
+      hint.textContent = 'Add at least 4 present players to make a game.';
+      return;
+    }
+    var effCourts = Math.max(1, Math.min(courts, Math.floor(n / 4)));
+    var playing = effCourts * 4;
+    var sitting = n - playing;
+    var msg = n + ' present · ' + effCourts + ' court' + (effCourts > 1 ? 's' : '') + ' · ' + playing + ' playing';
+    if (sitting > 0) msg += ' · ' + sitting + ' sitting out each game';
+    if (effCourts < courts) msg += ' (capped: not enough players for ' + courts + ' courts)';
+    hint.textContent = msg;
+  }
+
+  // ---------- generate ----------
+  function generateFullSession() {
+    if (presentCount() < 4) {
+      toast('Need at least 4 present players.');
+      return;
+    }
+    var numGames = group().config.games || 10;
+    group().games = [];
+    for (var i = 0; i < numGames; i++) {
+      var g = BadmintonGen.generateGame(group());
+      if (g.error) {
+        toast(g.error);
+        break;
+      }
+      group().games.push(g);
+    }
+    save();
+    showView('session');
+    toast(group().games.length + ' games generated');
+  }
+
+  function nextGame() {
+    if (presentCount() < 4) {
+      toast('Need at least 4 present players.');
+      return;
+    }
+    var g = BadmintonGen.generateGame(group());
+    if (g.error) {
+      toast(g.error);
+      return;
+    }
+    group().games.push(g);
+    save();
+    renderSession();
+    var container = $('#games-container');
+    container.lastElementChild && container.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function regenerateGame(index) {
+    var g = BadmintonGen.generateGame(group(), { excludeFrom: index });
+    if (g.error) {
+      toast(g.error);
+      return;
+    }
+    group().games[index] = g;
+    save();
+    renderSession();
+    toast('Game ' + (index + 1) + ' regenerated');
+  }
+
+  function newSession() {
+    if (!group().games.length) {
+      toast('Schedule is already empty.');
+      return;
+    }
+    if (!confirm('Clear this schedule and start a fresh session? Players and settings are kept.')) return;
+    group().games = [];
+    save();
+    renderSession();
+    toast('New session — adjust who’s here, then Generate.');
+  }
+
+  $('#btn-generate').addEventListener('click', generateFullSession);
+  $('#btn-generate-2').addEventListener('click', generateFullSession);
+  $('#btn-next').addEventListener('click', nextGame);
+  $('#btn-newsession').addEventListener('click', newSession);
+
+  // ---------- render: session ----------
+  function renderSession() {
+    var container = $('#games-container');
+    var games = group().games;
+    container.innerHTML = '';
+    $('#session-empty').style.display = games.length ? 'none' : 'block';
+
+    games.forEach(function (game, gi) {
+      var card = el('div', 'game-card');
+
+      var head = el('div', 'game-head');
+      head.appendChild(el('h3', null, 'Game ' + (gi + 1)));
+      var regen = el('button', 'regen-link', '↻ Regenerate');
+      regen.addEventListener('click', function () {
+        regenerateGame(gi);
+      });
+      head.appendChild(regen);
+      card.appendChild(head);
+
+      game.matches.forEach(function (m) {
+        var court = el('div', 'court');
+        if (game.matches.length > 1) court.appendChild(el('div', 'court-label', 'Court ' + m.court));
+
+        var matchup = el('div', 'matchup');
+        var teamA = el('div', 'team a');
+        m.teamA.forEach(function (id) {
+          teamA.appendChild(el('span', 'pl', nameOf(id)));
+        });
+        var vs = el('div', 'vs', 'vs');
+        var teamB = el('div', 'team b');
+        m.teamB.forEach(function (id) {
+          teamB.appendChild(el('span', 'pl', nameOf(id)));
+        });
+        matchup.appendChild(teamA);
+        matchup.appendChild(vs);
+        matchup.appendChild(teamB);
+        court.appendChild(matchup);
+        card.appendChild(court);
+      });
+
+      if (game.sitOuts && game.sitOuts.length) {
+        // Build with DOM nodes (not innerHTML): names can arrive from an
+        // untrusted share link, so they must never be interpreted as HTML.
+        var so = el('div', 'sit-outs');
+        so.appendChild(document.createTextNode('Sitting out: '));
+        so.appendChild(el('strong', null, game.sitOuts.map(nameOf).join(', ')));
+        card.appendChild(so);
+      }
+      container.appendChild(card);
+    });
+  }
+
+  // ---------- render: stats ----------
+  function renderStats() {
+    var games = group().games;
+    var stats = BadmintonGen.deriveStats(games);
+    var players = group().players.slice();
+
+    var wrap1 = $('#stats-players');
+    if (!games.length) {
+      wrap1.innerHTML = '<p class="muted">No games played yet.</p>';
+      $('#stats-matrix').innerHTML = '<p class="muted">No games played yet.</p>';
+      return;
+    }
+    var t1 = el('table', 'stats');
+    var hr = el('tr');
+    hr.appendChild(thCell('Player', true));
+    hr.appendChild(thCell('Games'));
+    hr.appendChild(thCell('Sat out'));
+    t1.appendChild(hr);
+    players.forEach(function (p) {
+      var tr = el('tr');
+      tr.appendChild(tdName(p.name));
+      tr.appendChild(tdCell(stats.gamesPlayed[p.id] || 0));
+      tr.appendChild(tdCell(stats.sitOuts[p.id] || 0));
+      t1.appendChild(tr);
+    });
+    wrap1.innerHTML = '';
+    wrap1.appendChild(t1);
+
+    var t2 = el('table', 'stats');
+    var head = el('tr');
+    head.appendChild(thCell('', true));
+    players.forEach(function (p) {
+      head.appendChild(thCell(initials(p.name)));
+    });
+    t2.appendChild(head);
+    players.forEach(function (rowP) {
+      var tr = el('tr');
+      tr.appendChild(tdName(rowP.name));
+      players.forEach(function (colP) {
+        if (rowP.id === colP.id) {
+          tr.appendChild(cell('', 'diag'));
+          return;
+        }
+        var rec = stats.partner[BadmintonGen.pairKey(rowP.id, colP.id)];
+        var c = rec ? rec.count : 0;
+        tr.appendChild(cell(c || '', 'cell-' + Math.min(c, 2)));
+      });
+      t2.appendChild(tr);
+    });
+    var wrap2 = $('#stats-matrix');
+    wrap2.innerHTML = '';
+    wrap2.appendChild(t2);
+  }
+
+  function thCell(text, nameCol) {
+    return el('th', nameCol ? 'name-col' : null, text);
+  }
+  function tdCell(text) {
+    return el('td', null, String(text));
+  }
+  function tdName(text) {
+    return el('td', 'name-col', text);
+  }
+  function cell(text, cls) {
+    return el('td', cls, String(text));
+  }
+  function initials(name) {
+    var parts = name.trim().split(/\s+/);
+    if (parts.length === 1) return name.slice(0, 3);
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  // ---------- sharing ----------
+  // Two backend-free ways to share the active group's roster:
+  //   • as formatted text (native share sheet, clipboard fallback)
+  //   • as a read-only link that encodes the whole roster in the URL #hash
+
+  function nameFrom(players, id) {
+    var p = players.find(function (x) { return x.id === id; });
+    return p ? p.name : '?';
+  }
+
+  function buildRosterText(g) {
+    var lines = ['🏸 ' + g.name + ' — ' + g.games.length + ' game' + (g.games.length === 1 ? '' : 's')];
+    g.games.forEach(function (game, gi) {
+      lines.push('');
+      lines.push('Game ' + (gi + 1));
+      game.matches.forEach(function (m) {
+        var a = m.teamA.map(function (id) { return nameFrom(g.players, id); }).join(' & ');
+        var b = m.teamB.map(function (id) { return nameFrom(g.players, id); }).join(' & ');
+        var prefix = game.matches.length > 1 ? '  Court ' + m.court + ': ' : '  ';
+        lines.push(prefix + a + '  vs  ' + b);
+      });
+      if (game.sitOuts && game.sitOuts.length) {
+        lines.push('  Sitting out: ' + game.sitOuts.map(function (id) { return nameFrom(g.players, id); }).join(', '));
+      }
+    });
+    return lines.join('\n');
+  }
+
+  // utf-8-safe, URL-safe base64 (handles accented names etc.)
+  function toB64(str) {
+    var bytes = new TextEncoder().encode(str);
+    var bin = '';
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function fromB64(b64) {
+    b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
+    var pad = b64.length % 4;
+    if (pad) b64 += '===='.slice(pad);
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+
+  // Compact payload: players carry names, games reference player indices.
+  function encodePayload(g) {
+    var idx = {};
+    g.players.forEach(function (p, i) { idx[p.id] = i; });
+    var payload = {
+      v: 1,
+      n: g.name || '',
+      p: g.players.map(function (p) { return [p.name, p.skill, p.present ? 1 : 0, p.guest ? 1 : 0]; }),
+      c: [g.config.courts, g.config.mode === 'level' ? 'l' : 's'],
+      g: (g.games || []).map(function (game) {
+        return {
+          m: game.matches.map(function (m) {
+            return [idx[m.teamA[0]], idx[m.teamA[1]], idx[m.teamB[0]], idx[m.teamB[1]]];
+          }),
+          s: (game.sitOuts || []).map(function (id) { return idx[id]; }),
+        };
+      }),
+    };
+    return toB64(JSON.stringify(payload));
+  }
+  function decodePayload(b64) {
+    var payload = JSON.parse(fromB64(b64));
+    if (!payload || !Array.isArray(payload.p)) return null;
+    var players = payload.p.map(function (a, i) {
+      return { id: 'p' + i, name: String(a[0]), skill: a[1] || 2, present: a[2] !== 0, guest: a[3] === 1 };
+    });
+    function byIndex(i) { return players[i] ? players[i].id : players[0].id; }
+    return {
+      id: '',
+      name: payload.n || 'Shared roster',
+      config: {
+        courts: (payload.c && payload.c[0]) || 2,
+        mode: payload.c && payload.c[1] === 'l' ? 'level' : 'spread',
+        games: 10,
+      },
+      players: players,
+      games: (payload.g || []).map(function (game, gi) {
+        return {
+          index: gi,
+          matches: (game.m || []).map(function (m, ci) {
+            return { court: ci + 1, teamA: [byIndex(m[0]), byIndex(m[1])], teamB: [byIndex(m[2]), byIndex(m[3])] };
+          }),
+          sitOuts: (game.s || []).map(byIndex),
+        };
+      }),
+    };
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (res, rej) {
+      var ta = el('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        res();
+      } catch (e) {
+        rej(e);
+      }
+      document.body.removeChild(ta);
+    });
+  }
+
+  function shareRoster() {
+    var g = group();
+    if (!g.games.length) {
+      toast('Generate a session first.');
+      return;
+    }
+    var text = buildRosterText(g);
+    if (navigator.share) {
+      navigator.share({ title: g.name + ' — badminton', text: text }).catch(function () {
+        /* user dismissed the share sheet */
+      });
+    } else {
+      copyText(text).then(
+        function () { toast('Roster copied to clipboard'); },
+        function () { toast('Could not copy'); }
+      );
+    }
+  }
+
+  function copyLink() {
+    var g = group();
+    if (!g.games.length) {
+      toast('Generate a session first.');
+      return;
+    }
+    var link = location.origin + location.pathname + '#s=' + encodePayload(g);
+    copyText(link).then(
+      function () { toast('Link copied — paste it to share'); },
+      function () { toast('Could not copy link'); }
+    );
+  }
+
+  $('#btn-share').addEventListener('click', shareRoster);
+  $('#btn-copylink').addEventListener('click', copyLink);
+
+  // ----- viewing a shared link -----
+  // A #s= link is loaded as a transient active group WITHOUT persisting, so
+  // merely opening someone's link never touches the viewer's saved groups.
+  var sharedCtx = { active: false, tempId: null, prevActiveId: null };
+
+  function clearHash() {
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+
+  function tryBootShared() {
+    var h = location.hash || '';
+    if (h.indexOf('#s=') !== 0) return false;
+    var g;
+    try {
+      g = decodePayload(h.slice(3));
+    } catch (e) {
+      g = null;
+    }
+    if (!g || !g.players.length) {
+      toast('That shared link looks invalid.');
+      clearHash();
+      return false;
+    }
+    g.id = gid();
+    sharedCtx = { active: true, tempId: g.id, prevActiveId: state.activeGroupId };
+    state.groups.push(g); // in memory only — not saved
+    state.activeGroupId = g.id;
+    refreshAll();
+    showView('session');
+    var banner = $('#share-banner');
+    // textContent (not innerHTML): the group name comes from an untrusted URL.
+    $('#share-banner .banner-text').textContent = 'Viewing shared roster: ' + g.name;
+    banner.removeAttribute('hidden');
+    return true;
+  }
+
+  $('#btn-save-copy').addEventListener('click', function () {
+    if (!sharedCtx.active) return;
+    // Disambiguate if the viewer already has a group with this name.
+    var g = group();
+    if (state.groups.some(function (x) { return x.id !== g.id && x.name === g.name; })) {
+      g.name = g.name + ' (shared)';
+    }
+    save(); // the shared group is already the active in-memory group
+    sharedCtx.active = false;
+    $('#share-banner').setAttribute('hidden', '');
+    clearHash();
+    renderGroupSelect();
+    toast('Saved as a new group');
+  });
+
+  $('#btn-exit-shared').addEventListener('click', function () {
+    if (sharedCtx.active) {
+      state.groups = state.groups.filter(function (g) { return g.id !== sharedCtx.tempId; });
+      var prev = sharedCtx.prevActiveId;
+      state.activeGroupId = prev && state.groups.some(function (g) { return g.id === prev; }) ? prev : state.groups[0].id;
+      sharedCtx.active = false;
+    }
+    $('#share-banner').setAttribute('hidden', '');
+    clearHash();
+    refreshAll();
+    showView('setup');
+  });
+
+  // ---------- boot ----------
+  function refreshAll() {
+    var g = group();
+    $('#cfg-courts').value = g.config.courts;
+    $('#cfg-games').value = g.config.games || 10;
+    $('#cfg-mode').value = g.config.mode || 'spread';
+    renderGroupSelect();
+    renderPlayers();
+    renderCapacityHint();
+    renderSession();
+  }
+  if (tryBootShared()) {
+    // Viewing a shared link: rendered read-only, nothing persisted.
+  } else {
+    refreshAll();
+    save(); // persist the v2 store on first boot (e.g. right after a legacy migration)
+  }
+})();
