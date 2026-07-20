@@ -27,7 +27,7 @@ group keeps its own players, skill levels, settings, and current schedule, so yo
 a group up once and reuse it:
 
 - **Same crew, minor changes?** Open the app, untick anyone who didn't show
-  (*present* checkbox), tick anyone back, then **Generate**.
+  (*playing* checkbox), tick anyone back, then **Generate**.
 - **A few extra players?** Add them, and remove them afterward with the **✕** next
   to their name to keep your core roster clean.
 - **Fresh week?** **New session** clears last week's schedule but keeps the roster and
@@ -41,7 +41,7 @@ Older single-session saves are migrated into a "My group" automatically on first
 
 **Session settings → Format** switches the whole schedule between doubles (2v2) and
 singles (1v1). A court then holds 2 players instead of 4, so the same room runs twice
-as many courts — and a session needs only 2 present players instead of 4.
+as many courts — and a session needs only 2 players instead of 4.
 
 Everything else adapts to match:
 
@@ -60,7 +60,7 @@ aren't interchangeable. Switching format therefore clears the current schedule
 becomes the sit-out pool, and the rotation evens it out over the session — 5 players
 on 2 singles courts sit one person per game, and over 5 games each sits exactly once.
 The capacity line under Session settings always spells out the split (e.g.
-*7 present · 1 court · 4 playing · 3 sitting out each game*), including when there
+*7 players · 1 court · 4 playing · 3 sitting out each game*), including when there
 aren't enough players to fill the courts you asked for.
 
 ## Sharing a roster

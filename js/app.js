@@ -240,7 +240,7 @@
       var chk = el('input', 'present-toggle');
       chk.type = 'checkbox';
       chk.checked = p.present;
-      chk.title = 'Present this session';
+      chk.title = 'Playing this session';
       chk.addEventListener('change', function () {
         p.present = chk.checked;
         save();
@@ -306,12 +306,12 @@
     return group().players.filter(function (p) { return p.present; }).length;
   }
   function renderCapacityHint() {
-    renderHeader(); // present/court counts live in the header too
+    renderHeader(); // player/court counts live in the header too
     var n = presentCount();
     var courts = group().config.courts;
     var hint = $('#capacity-hint');
     if (n < 2) {
-      hint.textContent = 'Add at least 2 present players to make a game.';
+      hint.textContent = 'Add at least 2 players to make a game.';
       return;
     }
     var plan = planFor();
@@ -325,7 +325,7 @@
     if (doubles) mix.push(doubles + ' × 2v2');
     if (singles) mix.push(singles + ' × 1v1');
     var msg =
-      n + ' present · ' + plan.length + ' court' + (plan.length > 1 ? 's' : '') +
+      n + ' player' + (n === 1 ? '' : 's') + ' · ' + plan.length + ' court' + (plan.length > 1 ? 's' : '') +
       ' (' + mix.join(', ') + ') · ' + playing + ' playing';
     if (sitting > 0) msg += ' · ' + sitting + ' sitting out each game';
     if (plan.length < courts) msg += ' (capped: not enough players for ' + courts + ' courts)';
@@ -335,7 +335,7 @@
   // ---------- generate ----------
   function enoughPlayers() {
     if (presentCount() >= 2) return true;
-    toast('Need at least 2 present players.');
+    toast('Need at least 2 players.');
     return false;
   }
 
@@ -408,7 +408,7 @@
     $('#header-title').textContent = g.name;
     $('#header-count').textContent = g.games.length + (g.games.length === 1 ? ' game' : ' games');
     $('#header-meta').textContent =
-      n + ' present · ' + courts + (courts === 1 ? ' court' : ' courts');
+      n + ' player' + (n === 1 ? '' : 's') + ' · ' + courts + (courts === 1 ? ' court' : ' courts');
   }
 
   // ---------- render: session ----------

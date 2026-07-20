@@ -343,7 +343,7 @@
 
     if (present.length < 2) {
       return {
-        error: 'Need at least 2 present players to make a game.',
+        error: 'Need at least 2 players to make a game.',
         index: gameIndex,
       };
     }
