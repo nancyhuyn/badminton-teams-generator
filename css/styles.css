@@ -17,9 +17,9 @@
   --pill-light-ink: #12293f;
 
   /* solid fills (segmented tabs, primary buttons) */
-  --solid: #2f6ba5;
-  --solid-ink: #ffffff;
-  --solid-hover: #275c8f;
+  --solid: #89c2f7;
+  --solid-ink: #0d3a66; /* dark ink: white fails contrast on this light blue */
+  --solid-hover: #6fb0ee;
 
   /* surfaces */
   --bg: #eef2f7;
@@ -54,9 +54,9 @@
     --pill-light: #e8eef5;
     --pill-light-ink: #12293f;
 
-    --solid: #3f7fbe;
-    --solid-ink: #ffffff;
-    --solid-hover: #4d8bc9;
+    --solid: #89c2f7;
+    --solid-ink: #0b2a48;
+    --solid-hover: #a3d0fa;
 
     --bg: #191b1f;
     --card: #212429;
