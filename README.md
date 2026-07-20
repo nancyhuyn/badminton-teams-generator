@@ -1,8 +1,8 @@
 # 🏸 Badminton Team Generator
 
-A phone-friendly, zero-dependency web app that builds fair badminton doubles (2v2)
-teams for a casual session. It maximizes partner variety, avoids recent repeats,
-rotates sit-outs fairly, and balances skill in one of two modes.
+A phone-friendly, zero-dependency web app that builds fair badminton matchups for a
+casual session — **doubles (2v2)** or **singles (1v1)**. It maximizes variety, avoids
+recent repeats, rotates sit-outs fairly, and balances skill in one of two modes.
 
 ## Running it
 
@@ -37,6 +37,32 @@ a group up once and reuse it:
 
 Older single-session saves are migrated into a "My group" automatically on first load.
 
+## Doubles or singles
+
+**Session settings → Format** switches the whole schedule between doubles (2v2) and
+singles (1v1). A court then holds 2 players instead of 4, so the same room runs twice
+as many courts — and a session needs only 2 present players instead of 4.
+
+Everything else adapts to match:
+
+- Singles has no partnerships, so **who you face** becomes the variety axis the
+  generator protects: it plays you against everyone once before repeating anyone.
+- Stats swaps the Partnership matrix for a **Matchup matrix** (same read: aim for an
+  even, mostly-1 grid).
+- Both balancing modes still apply — *level-based* matches you against someone of
+  your level; *spread strong* keeps the two sides of each net even.
+
+A schedule is one format throughout, since partnership history and matchup history
+aren't interchangeable. Switching format therefore clears the current schedule
+(it asks first); players, skills, and settings are kept.
+
+**Odd numbers are fine in either format.** Whatever doesn't divide into full courts
+becomes the sit-out pool, and the rotation evens it out over the session — 5 players
+on 2 singles courts sit one person per game, and over 5 games each sits exactly once.
+The capacity line under Session settings always spells out the split (e.g.
+*7 present · 1 court · 4 playing · 3 sitting out each game*), including when there
+aren't enough players to fill the courts you asked for.
+
 ## Sharing a roster
 
 From the **Session** tab (no backend, no screenshots needed):
@@ -67,6 +93,10 @@ The hash carries a one-character format marker:
 Rosters larger than 64 players fall back to the legacy format, since the index
 alphabet is 64 characters wide.
 
+Singles links append an `S` to the config field (`2s` → `2sS`), which tells the
+decoder a match is 2 characters rather than 4. Links made before singles existed
+simply lack it and decode as doubles, so they keep working unchanged.
+
 ## How it works
 
 Everything is in three files:
@@ -81,19 +111,22 @@ Everything is in three files:
 
 Given the current session, it produces **one** game:
 
-1. **Sit-outs** — when more players are present than `courts × 4`, the players who
-   have sat out *least* so far sit out this game. Evens the burden over the session.
+1. **Sit-outs** — when more players are present than `courts × 4` (or `courts × 2` in
+   singles), the players who have sat out *least* so far sit out this game. Evens the
+   burden over the session.
 2. **Team forming** — random restarts + a local-search swap pass pick the
    lowest-cost split of the playing players into courts and teams. The cost function
    penalizes, in priority order:
    - **Repeated partnerships** (quadratic; recent repeats hurt more) — the core
-     "play with everyone before repeating" rule.
+     "play with everyone before repeating" rule. Doubles only.
    - **Skill**, per the active mode:
      - *Spread strong (default):* balance the two teams and **never stack two
        Advanced players** on one team → strong players spread across courts, each
        paired with a weaker one.
      - *Level-based:* keep similar levels on the same court → even, competitive games.
-   - **Repeated opponents** (mild secondary variety).
+   - **Repeated opponents** — a mild secondary nudge in doubles. In singles there are
+     no partnerships to vary, so this carries the weight partnerships carry above and
+     becomes the rule that spreads matchups around.
 
 The same function powers "Generate full session" (called N times), "Next game", and
 "Regenerate this game".
@@ -115,7 +148,8 @@ node test/generator.test.js
 ```
 
 Covers: partnership variety, sit-out fairness, spread vs. level behavior, the
-long-session saturation case, and edge cases (fewer than 4 players, court capping).
+long-session saturation case, singles matchup variety and level matching, and edge
+cases (too few players for the format, court capping).
 
 ## Ideas for later
 

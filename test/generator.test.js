@@ -168,6 +168,149 @@ section('Level mode: similar skills grouped on the same court');
 })();
 
 // ---------------------------------------------------------------------------
+section('Court plan: players spread across the courts, 2v2 or 1v1 as they fit');
+(function () {
+  function plan(n, courts) { return G.courtPlan(n, courts).join(','); }
+
+  // The two rules, in order: seat as many people as possible, then use as many
+  // courts as possible.
+  ok(plan(4, 2) === '2,2', '4 players on 2 courts -> two 1v1s, not one 2v2 (' + plan(4, 2) + ')');
+  ok(plan(7, 2) === '4,2', '7 players on 2 courts -> a 2v2 and a 1v1 (' + plan(7, 2) + ')');
+  ok(plan(8, 2) === '4,4', '8 players on 2 courts -> two 2v2s (' + plan(8, 2) + ')');
+  ok(plan(6, 2) === '4,2', '6 players on 2 courts -> everyone plays (' + plan(6, 2) + ')');
+  ok(plan(4, 1) === '4', '4 players on 1 court -> one 2v2 (' + plan(4, 1) + ')');
+  ok(plan(3, 2) === '2', '3 players on 2 courts -> one 1v1, one sits (' + plan(3, 2) + ')');
+  ok(plan(2, 3) === '2', '2 players -> a single 1v1 (' + plan(2, 3) + ')');
+  ok(plan(9, 2) === '4,4', 'courts, not players, are the cap (' + plan(9, 2) + ')');
+  ok(plan(1, 2) === '', 'nobody can play with 1 present (' + plan(1, 2) + ')');
+})();
+
+// ---------------------------------------------------------------------------
+section('Mixed courts: a 2v2 and a 1v1 side by side, with the 1v1 rotating');
+(function () {
+  var session = {
+    players: makePlayers([
+      ['A', 2], ['B', 2], ['C', 2], ['D', 2],
+      ['E', 2], ['F', 2], ['G', 2],
+    ]),
+    config: { courts: 2, mode: 'spread' },
+    games: [],
+  };
+  playFullSession(session, 7, 700);
+
+  var shapesOk = session.games.every(function (g) {
+    var sizes = g.matches.map(function (m) { return m.teamA.length + m.teamB.length; });
+    return sizes.length === 2 && sizes.indexOf(4) >= 0 && sizes.indexOf(2) >= 0;
+  });
+  ok(shapesOk, '7 players on 2 courts -> one 2v2 and one 1v1 every game');
+  ok(
+    session.games.every(function (g) { return g.sitOuts.length === 1; }),
+    '7 players, 6 on court -> exactly 1 sitting out each game'
+  );
+
+  var stats = G.deriveStats(session.games);
+  // 7 games x 1 singles court x 2 players = 14 singles slots over 7 players, so
+  // ~2 each. The generator picks each game greedily against history rather than
+  // planning the whole session, so it lands near even, not exactly even.
+  var singles = session.players.map(function (p) { return stats.singlesPlayed[p.id] || 0; });
+  var spreadS = Math.max.apply(null, singles) - Math.min.apply(null, singles);
+  ok(spreadS <= 2, 'the 1v1 court rotates (spread ' + spreadS + ', counts ' + singles.join(',') + ')');
+  ok(
+    singles.every(function (c) { return c >= 1; }),
+    'nobody is left out of the 1v1 court entirely (' + singles.join(',') + ')'
+  );
+
+  var sits = session.players.map(function (p) { return stats.sitOuts[p.id] || 0; });
+  var spread = Math.max.apply(null, sits) - Math.min.apply(null, sits);
+  ok(spread <= 1, 'sit-outs stay even (spread ' + spread + ', counts ' + sits.join(',') + ')');
+})();
+
+// ---------------------------------------------------------------------------
+section('All-1v1 level mode: like plays like');
+(function () {
+  var session = {
+    players: makePlayers([
+      ['S1', 3], ['S2', 3], ['S3', 3], ['S4', 3],
+      ['W1', 1], ['W2', 1], ['W3', 1], ['W4', 1],
+    ]),
+    config: { courts: 4, mode: 'level' }, // 8 players over 4 courts -> four 1v1s
+    games: [],
+  };
+  var byId = {};
+  session.players.forEach(function (p) { byId[p.id] = p; });
+  playFullSession(session, 6, 800);
+
+  var mismatched = 0;
+  session.games.forEach(function (g) {
+    ok(g.sitOuts.length === 0, 'all 8 players are on court across 4 1v1 courts');
+    g.matches.forEach(function (m) {
+      if (byId[m.teamA[0]].skill !== byId[m.teamB[0]].skill) mismatched++;
+    });
+  });
+  ok(mismatched === 0, 'level mode never matched a strong player against a weak one (got ' + mismatched + ')');
+})();
+
+// ---------------------------------------------------------------------------
+section('Odd player counts: the remainder just rotates through the sit-out list');
+(function () {
+  // 5 players on 2 courts -> two 1v1s, 1 sits. Over 5 games everyone should
+  // sit exactly once.
+  var s1 = {
+    players: makePlayers([['A', 2], ['B', 2], ['C', 2], ['D', 2], ['E', 2]]),
+    config: { courts: 2, mode: 'spread' },
+    games: [],
+  };
+  playFullSession(s1, 5, 900);
+  var st1 = G.deriveStats(s1.games);
+  var sits1 = s1.players.map(function (p) { return st1.sitOuts[p.id] || 0; });
+  ok(
+    sits1.every(function (c) { return c === 1; }),
+    '5 players over 5 games -> everyone sits exactly once (' + sits1.join(',') + ')'
+  );
+  ok(
+    s1.games.every(function (g) { return g.matches.length === 2 && g.sitOuts.length === 1; }),
+    '5 players on 2 courts -> two 1v1s + 1 sit-out every game'
+  );
+
+  // 11 players on 2 courts: two 2v2s, so 3 sit each game.
+  var s2 = {
+    players: makePlayers([
+      ['A', 2], ['B', 2], ['C', 2], ['D', 2], ['E', 2], ['F', 2],
+      ['G', 2], ['H', 2], ['I', 2], ['J', 2], ['K', 2],
+    ]),
+    config: { courts: 2, mode: 'spread' },
+    games: [],
+  };
+  playFullSession(s2, 7, 950);
+  ok(
+    s2.games.every(function (g) { return g.matches.length === 2 && g.sitOuts.length === 3; }),
+    '11 players on 2 courts -> two 2v2s, 3 sitting out (capped by the courts)'
+  );
+  var st2 = G.deriveStats(s2.games);
+  var sits2 = s2.players.map(function (p) { return st2.sitOuts[p.id] || 0; });
+  var spread2 = Math.max.apply(null, sits2) - Math.min.apply(null, sits2);
+  ok(spread2 <= 1, 'odd player count keeps sit-outs within 1 (' + sits2.join(',') + ')');
+
+  // 9 players, 4 courts: 8 play as four 1v1s, 1 sits — an odd count that still
+  // fills every court.
+  var s3 = {
+    players: makePlayers([
+      ['A', 2], ['B', 2], ['C', 2], ['D', 2], ['E', 2],
+      ['F', 2], ['G', 2], ['H', 2], ['I', 2],
+    ]),
+    config: { courts: 4, mode: 'spread' },
+    games: [],
+  };
+  playFullSession(s3, 9, 990);
+  var st3 = G.deriveStats(s3.games);
+  var sits3 = s3.players.map(function (p) { return st3.sitOuts[p.id] || 0; });
+  ok(
+    sits3.every(function (c) { return c === 1; }),
+    '9 players over 9 games -> everyone sits exactly once (' + sits3.join(',') + ')'
+  );
+})();
+
+// ---------------------------------------------------------------------------
 section('Edge cases');
 (function () {
   var few = {
@@ -176,7 +319,10 @@ section('Edge cases');
     games: [],
   };
   var g = G.generateGame(few, { seed: 1 });
-  ok(!!g.error, 'fewer than 4 present players returns an error');
+  ok(
+    !g.error && g.matches.length === 1 && g.matches[0].teamA.length === 1 && g.sitOuts.length === 1,
+    '3 players on 1 court -> a 1v1 with 1 sitting out'
+  );
 
   var four = {
     players: makePlayers([['A', 2], ['B', 2], ['C', 2], ['D', 2]]),
@@ -186,14 +332,24 @@ section('Edge cases');
   var g2 = G.generateGame(four, { seed: 1 });
   ok(!g2.error && g2.matches.length === 1 && g2.sitOuts.length === 0, 'exactly 4 players -> one match, no sit-outs');
 
-  // Courts capped when too few players for the requested court count.
+  // Six on two courts fills both rather than benching two people for one 2v2.
   var six = {
     players: makePlayers([['A', 2], ['B', 2], ['C', 2], ['D', 2], ['E', 2], ['F', 2]]),
-    config: { courts: 2, mode: 'spread' }, // asks 2 courts (needs 8) but only 6 present
+    config: { courts: 2, mode: 'spread' },
     games: [],
   };
   var g3 = G.generateGame(six, { seed: 1 });
-  ok(g3.matches.length === 1 && g3.sitOuts.length === 2, 'courts capped to available players (1 court, 2 sit out)');
+  ok(
+    g3.matches.length === 2 && g3.sitOuts.length === 0,
+    '6 players on 2 courts -> a 2v2 plus a 1v1, nobody sits'
+  );
+
+  var one = {
+    players: makePlayers([['A', 2]]),
+    config: { courts: 1, mode: 'spread' },
+    games: [],
+  };
+  ok(!!G.generateGame(one, { seed: 1 }).error, 'fewer than 2 present players returns an error');
 })();
 
 // ---------------------------------------------------------------------------

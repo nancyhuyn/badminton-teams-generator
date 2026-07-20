@@ -422,6 +422,11 @@ input[type="checkbox"] {
   gap: 0.6rem;
   justify-items: center;
 }
+/* Singles: one player per side, centred on the court rather than parked in the
+   left half of a two-column grid. */
+.court-side.solo {
+  grid-template-columns: 1fr;
+}
 .court-net {
   display: flex;
   align-items: center;

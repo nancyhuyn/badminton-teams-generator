@@ -20,6 +20,12 @@
   function defaultConfig() {
     return { courts: 2, mode: 'spread', games: 10 };
   }
+  // Court sizes for one game (4 = 2v2, 2 = 1v1), as the generator will pick them.
+  function planFor(g) {
+    g = g || group();
+    var n = g.players.filter(function (p) { return p.present; }).length;
+    return BadmintonGen.courtPlan(n, g.config.courts);
+  }
   function newGroupObj(name) {
     return { id: gid(), name: name, players: [], config: defaultConfig(), games: [] };
   }
@@ -70,6 +76,8 @@
     s.groups.forEach(function (g) {
       g.config = g.config || defaultConfig();
       if (g.config.games === undefined) g.config.games = 10;
+      delete g.config.format; // pre-mixed-courts saves pinned a format; now derived
+
       g.games = g.games || [];
       g.players = (g.players || []).map(function (p) {
         return { id: p.id || uid(), name: p.name, skill: p.skill || 2, present: p.present !== false };
@@ -302,25 +310,37 @@
     var n = presentCount();
     var courts = group().config.courts;
     var hint = $('#capacity-hint');
-    if (n < 4) {
-      hint.textContent = 'Add at least 4 present players to make a game.';
+    if (n < 2) {
+      hint.textContent = 'Add at least 2 present players to make a game.';
       return;
     }
-    var effCourts = Math.max(1, Math.min(courts, Math.floor(n / 4)));
-    var playing = effCourts * 4;
+    var plan = planFor();
+    var doubles = plan.filter(function (size) { return size === 4; }).length;
+    var singles = plan.length - doubles;
+    var playing = doubles * 4 + singles * 2;
     var sitting = n - playing;
-    var msg = n + ' present · ' + effCourts + ' court' + (effCourts > 1 ? 's' : '') + ' · ' + playing + ' playing';
+    // Spell out the court mix, since it's now derived from the head count
+    // rather than chosen: "2 courts (1 × 2v2, 1 × 1v1)".
+    var mix = [];
+    if (doubles) mix.push(doubles + ' × 2v2');
+    if (singles) mix.push(singles + ' × 1v1');
+    var msg =
+      n + ' present · ' + plan.length + ' court' + (plan.length > 1 ? 's' : '') +
+      ' (' + mix.join(', ') + ') · ' + playing + ' playing';
     if (sitting > 0) msg += ' · ' + sitting + ' sitting out each game';
-    if (effCourts < courts) msg += ' (capped: not enough players for ' + courts + ' courts)';
+    if (plan.length < courts) msg += ' (capped: not enough players for ' + courts + ' courts)';
     hint.textContent = msg;
   }
 
   // ---------- generate ----------
+  function enoughPlayers() {
+    if (presentCount() >= 2) return true;
+    toast('Need at least 2 present players.');
+    return false;
+  }
+
   function generateFullSession() {
-    if (presentCount() < 4) {
-      toast('Need at least 4 present players.');
-      return;
-    }
+    if (!enoughPlayers()) return;
     var numGames = group().config.games || 10;
     group().games = [];
     for (var i = 0; i < numGames; i++) {
@@ -337,10 +357,7 @@
   }
 
   function nextGame() {
-    if (presentCount() < 4) {
-      toast('Need at least 4 present players.');
-      return;
-    }
+    if (!enoughPlayers()) return;
     var g = BadmintonGen.generateGame(group());
     if (g.error) {
       toast(g.error);
@@ -386,7 +403,7 @@
   function renderHeader() {
     var g = group();
     var n = presentCount();
-    var courts = Math.max(1, Math.min(g.config.courts, Math.floor(n / 4) || 1));
+    var courts = Math.max(1, planFor(g).length);
     // textContent: group names can come from an untrusted share link.
     $('#header-title').textContent = g.name;
     $('#header-count').textContent = g.games.length + (g.games.length === 1 ? ' game' : ' games');
@@ -420,13 +437,16 @@
         court.appendChild(el('div', 'court-label', 'Court ' + m.court));
 
         var floor = el('div', 'court-floor');
-        var sideA = el('div', 'court-side top');
+        // '.solo' centres a lone player instead of leaving them in the left
+        // column of the two-up doubles grid.
+        var solo = m.teamA.length === 1 ? ' solo' : '';
+        var sideA = el('div', 'court-side top' + solo);
         m.teamA.forEach(function (id) {
           sideA.appendChild(el('span', 'pl light', nameOf(id)));
         });
         var net = el('div', 'court-net');
         net.appendChild(el('span', null, 'NET'));
-        var sideB = el('div', 'court-side bottom');
+        var sideB = el('div', 'court-side bottom' + (m.teamB.length === 1 ? ' solo' : ''));
         m.teamB.forEach(function (id) {
           sideB.appendChild(el('span', 'pl dark', nameOf(id)));
         });
@@ -454,6 +474,7 @@
     var games = group().games;
     var stats = BadmintonGen.deriveStats(games);
     var players = group().players.slice();
+    var matrix = stats.partner;
 
     var wrap1 = $('#stats-players');
     if (!games.length) {
@@ -492,7 +513,7 @@
           tr.appendChild(cell('', 'diag'));
           return;
         }
-        var rec = stats.partner[BadmintonGen.pairKey(rowP.id, colP.id)];
+        var rec = matrix[BadmintonGen.pairKey(rowP.id, colP.id)];
         var c = rec ? rec.count : 0;
         tr.appendChild(cell(c || '', 'cell-' + Math.min(c, 2)));
       });
@@ -584,8 +605,10 @@
       c: [g.config.courts, g.config.mode === 'level' ? 'l' : 's'],
       g: (g.games || []).map(function (game) {
         return {
+          // teamA then teamB, flattened — 2 entries for a 1v1 court, 4 for a
+          // 2v2, so the length tells the decoder which kind of court this is.
           m: game.matches.map(function (m) {
-            return [idx[m.teamA[0]], idx[m.teamA[1]], idx[m.teamB[0]], idx[m.teamB[1]]];
+            return m.teamA.concat(m.teamB).map(function (id) { return idx[id]; });
           }),
           s: (game.sitOuts || []).map(function (id) { return idx[id]; }),
         };
@@ -600,6 +623,20 @@
       return { id: 'p' + i, name: String(a[0]), skill: a[1] || 2, present: a[2] !== 0 };
     });
     function byIndex(i) { return players[i] ? players[i].id : players[0].id; }
+    var games = (payload.g || []).map(function (game, gi) {
+      return {
+        index: gi,
+        matches: (game.m || []).map(function (m, ci) {
+          var half = m.length === 2 ? 1 : 2; // 2 entries -> 1v1, 4 -> 2v2
+          return {
+            court: ci + 1,
+            teamA: m.slice(0, half).map(byIndex),
+            teamB: m.slice(half, half * 2).map(byIndex),
+          };
+        }),
+        sitOuts: (game.s || []).map(byIndex),
+      };
+    });
     return {
       id: '',
       name: payload.n || 'Shared roster',
@@ -609,15 +646,7 @@
         games: 10,
       },
       players: players,
-      games: (payload.g || []).map(function (game, gi) {
-        return {
-          index: gi,
-          matches: (game.m || []).map(function (m, ci) {
-            return { court: ci + 1, teamA: [byIndex(m[0]), byIndex(m[1])], teamB: [byIndex(m[2]), byIndex(m[3])] };
-          }),
-          sitOuts: (game.s || []).map(byIndex),
-        };
-      }),
+      games: games,
     };
   }
 
@@ -650,13 +679,20 @@
       return IDX[skill * 2 + (p.present ? 1 : 0)];
     }).join('');
 
+    // A game mixes 2v2 and 1v1 courts, so its match chars are variable-width.
+    // Each game therefore leads with one digit per court — '4' or '2', the
+    // player count of that court — then ':' and the chars themselves.
     var games = (g.games || []).map(function (game) {
-      var m = game.matches.map(function (x) {
-        return ch(x.teamA[0]) + ch(x.teamA[1]) + ch(x.teamB[0]) + ch(x.teamB[1]);
+      var sizes = game.matches.map(function (x) {
+        return String(x.teamA.length + x.teamB.length);
       }).join('');
-      return m + '.' + (game.sitOuts || []).map(ch).join('');
+      var m = game.matches.map(function (x) {
+        return x.teamA.concat(x.teamB).map(ch).join('');
+      }).join('');
+      return sizes + ':' + m + '.' + (game.sitOuts || []).map(ch).join('');
     }).join(',');
 
+    // Config field: courts, then mode ('l'/'s').
     return [
       esc(g.name || ''),
       String(g.config.courts) + (g.config.mode === 'level' ? 'l' : 's'),
@@ -666,7 +702,11 @@
     ].join('|');
   }
 
-  function unpackPayload(str) {
+  /*
+   * `legacyPer`, when given, is the fixed match width of a pre-mixed-courts
+   * link (4 for doubles, 2 for singles) whose games carry no size prefix.
+   */
+  function unpackPayload(str, legacyPer) {
     var parts = str.split('|');
     if (parts.length < 5) return null;
     var names = parts[2] === '' ? [] : parts[2].split(',');
@@ -683,6 +723,7 @@
       return players[i] ? players[i].id : players[0].id;
     }
     var courts = parseInt(parts[1], 10);
+    var flags = parts[1].replace(/[0-9]/g, '');
     var games = parts[4] === '' ? [] : parts[4].split(',');
 
     return {
@@ -690,21 +731,37 @@
       name: unesc(parts[0]) || 'Shared roster',
       config: {
         courts: courts >= 1 && courts <= 6 ? courts : 2,
-        mode: parts[1].slice(-1) === 'l' ? 'level' : 'spread',
+        mode: flags.charAt(0) === 'l' ? 'level' : 'spread',
         games: 10,
       },
       players: players,
       games: games.map(function (chunk, gi) {
+        // "<sizes>:<matchchars>.<sitouts>", or "<matchchars>.<sitouts>" on a
+        // legacy link, where every court was the same fixed width.
+        var colon = chunk.indexOf(':');
+        var sizes;
+        if (legacyPer && colon < 0) {
+          sizes = [];
+          var courtCount = Math.floor((chunk.split('.')[0] || '').length / legacyPer);
+          for (var k = 0; k < courtCount; k++) sizes.push(legacyPer);
+        } else {
+          sizes = chunk.slice(0, colon).split('').map(Number);
+          chunk = chunk.slice(colon + 1);
+        }
         var half = chunk.split('.');
         var m = half[0] || '';
         var matches = [];
-        for (var i = 0; i + 4 <= m.length; i += 4) {
+        var i = 0;
+        sizes.forEach(function (size) {
+          if (size !== 2 && size !== 4) return; // ignore anything malformed
+          if (i + size > m.length) return;
           matches.push({
             court: matches.length + 1,
-            teamA: [byIndex(m[i]), byIndex(m[i + 1])],
-            teamB: [byIndex(m[i + 2]), byIndex(m[i + 3])],
+            teamA: m.slice(i, i + size / 2).split('').map(byIndex),
+            teamB: m.slice(i + size / 2, i + size).split('').map(byIndex),
           });
-        }
+          i += size;
+        });
         return { index: gi, matches: matches, sitOuts: (half[1] || '').split('').map(byIndex) };
       }),
     };
@@ -738,7 +795,9 @@
 
   // Returns the value that goes after '#s=' — a one-char format marker plus
   // base64. Legacy v1 links are unmarked and always start with 'e' (base64 of
-  // '{"v"...'), so '2'/'3' can never be mistaken for one.
+  // '{"v"...'), so a digit marker can never be mistaken for one.
+  //   4/5 — packed / deflated, per-court sizes (current)
+  //   2/3 — the same, back when a whole schedule was one fixed format
   function encodeShareHash(g) {
     if (g.players.length > IDX.length) {
       return Promise.resolve(encodePayload(g)); // v1: more players than index chars
@@ -746,7 +805,7 @@
     var packed = packPayload(g);
     var raw = new TextEncoder().encode(packed);
     return deflate(raw).then(function (z) {
-      return z && z.length < raw.length ? '3' + bytesToB64(z) : '2' + bytesToB64(raw);
+      return z && z.length < raw.length ? '5' + bytesToB64(z) : '4' + bytesToB64(raw);
     });
   }
 
@@ -755,8 +814,21 @@
   function decodeShareHash(h) {
     try {
       var marker = h[0];
-      if (marker === '2') return Promise.resolve(unpackPayload(fromB64(h.slice(1))));
-      if (marker === '3') return inflate(b64ToBytes(h.slice(1))).then(unpackPayload);
+      if (marker === '4') return Promise.resolve(unpackPayload(fromB64(h.slice(1))));
+      if (marker === '5') return inflate(b64ToBytes(h.slice(1))).then(function (s) {
+        return unpackPayload(s);
+      });
+      // Legacy packed links: the fixed match width lives in the config flags.
+      function legacyPer(s) {
+        return (s.split('|')[1] || '').indexOf('S') >= 0 ? 2 : 4;
+      }
+      if (marker === '2') {
+        var s2 = fromB64(h.slice(1));
+        return Promise.resolve(unpackPayload(s2, legacyPer(s2)));
+      }
+      if (marker === '3') return inflate(b64ToBytes(h.slice(1))).then(function (s) {
+        return unpackPayload(s, legacyPer(s));
+      });
       return Promise.resolve(decodePayload(h));
     } catch (e) {
       return Promise.reject(e);
