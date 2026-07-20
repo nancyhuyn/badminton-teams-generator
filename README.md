@@ -1,8 +1,9 @@
 # 🏸 Badminton Team Generator
 
 A phone-friendly, zero-dependency web app that builds fair badminton matchups for a
-casual session — **doubles (2v2)** or **singles (1v1)**. It maximizes variety, avoids
-recent repeats, rotates sit-outs fairly, and balances skill in one of two modes.
+casual session. It spreads whoever turned up across the courts you have, maximizes
+variety, avoids recent repeats, rotates sit-outs fairly, and balances skill in one of
+two modes.
 
 ## Running it
 
@@ -37,31 +38,35 @@ a group up once and reuse it:
 
 Older single-session saves are migrated into a "My group" automatically on first load.
 
-## Doubles or singles
+## How the courts get filled
 
-**Session settings → Format** switches the whole schedule between doubles (2v2) and
-singles (1v1). A court then holds 2 players instead of 4, so the same room runs twice
-as many courts — and a session needs only 2 players instead of 4.
+There's no format to choose. Tell the app how many courts you have, and it spreads
+whoever is present across them, using 2v2 or 1v1 on each court as the head count
+allows. Two rules, in order:
 
-Everything else adapts to match:
+1. seat as many people as the courts can hold
+2. among equally full plans, use as many courts as possible
 
-- Singles has no partnerships, so **who you face** becomes the variety axis the
-  generator protects: it plays you against everyone once before repeating anyone.
-- Stats swaps the Partnership matrix for a **Matchup matrix** (same read: aim for an
-  even, mostly-1 grid).
-- Both balancing modes still apply — *level-based* matches you against someone of
-  your level; *spread strong* keeps the two sides of each net even.
+So **4 players on 2 courts** is two 1v1s — nobody benched to make a single 2v2 — and
+**7 on 2 courts** is one 2v2 plus one 1v1, with one person sitting. Add an eighth
+player and it becomes two 2v2s on its own.
 
-A schedule is one format throughout, since partnership history and matchup history
-aren't interchangeable. Switching format therefore clears the current schedule
-(it asks first); players, skills, and settings are kept.
+Everything adapts to whatever mix comes out:
 
-**Odd numbers are fine in either format.** Whatever doesn't divide into full courts
-becomes the sit-out pool, and the rotation evens it out over the session — 5 players
-on 2 singles courts sit one person per game, and over 5 games each sits exactly once.
-The capacity line under Session settings always spells out the split (e.g.
-*7 players · 1 court · 4 playing · 3 sitting out each game*), including when there
-aren't enough players to fill the courts you asked for.
+- Partnerships still drive variety on the 2v2 courts; on a 1v1 court **who you face**
+  is the variety axis instead, and the generator protects it the same way.
+- The 1v1 court is the tiring one, so it rotates: whoever has played the fewest
+  singles so far gets it next.
+- Both balancing modes still apply — *level-based* keeps similar levels on a court;
+  *spread strong* keeps the two sides of each net even and refuses to stack the
+  strong players together.
+
+**Odd numbers are fine.** Whoever doesn't fit becomes the sit-out pool, and the
+rotation evens it out over the session — 5 players on 2 courts sit one person per
+game, and over 5 games each sits exactly once. The capacity line under Session
+settings always spells out the split (e.g. *7 present · 2 courts (1 × 2v2, 1 × 1v1) ·
+6 playing · 1 sitting out each game*), including when there aren't enough players to
+fill the courts you asked for.
 
 ## Sharing a roster
 
@@ -78,24 +83,29 @@ From the **Session** tab (no backend, no screenshots needed):
 ### Link format
 
 Because the roster travels in the URL itself, the hash is packed hard: player
-indices are single characters (a match is 4 chars, a game ~16) and the result is
+indices are single characters (a 2v2 court is 4 chars, a 1v1 is 2) and the result is
 deflate-compressed before base64. A 16-player, 10-game session comes out around
 270 characters of hash instead of ~1,100.
+
+Since one game can mix court sizes, each game leads with one digit per court — `4`
+or `2`, that court's player count — then `:` and the index characters, e.g.
+`42:ABCDEF.G` for a 2v2 plus a 1v1 with one person sitting out.
 
 The hash carries a one-character format marker:
 
 | Marker | Format |
 | --- | --- |
-| `3` | packed + deflate-raw (normal case) |
-| `2` | packed, uncompressed — browsers without `CompressionStream` |
-| none | legacy JSON payload; still decoded so old links keep working |
+| `5` | packed + deflate-raw (normal case) |
+| `4` | packed, uncompressed — browsers without `CompressionStream` |
+| `3`, `2` | the same pair, from when a whole schedule was one fixed format |
+| none | legacy JSON payload |
 
-Rosters larger than 64 players fall back to the legacy format, since the index
+Rosters larger than 64 players fall back to the legacy JSON payload, since the index
 alphabet is 64 characters wide.
 
-Singles links append an `S` to the config field (`2s` → `2sS`), which tells the
-decoder a match is 2 characters rather than 4. Links made before singles existed
-simply lack it and decode as doubles, so they keep working unchanged.
+Every older marker still decodes, so links shared before mixed courts keep working.
+A `2`/`3` link has no per-court digits: its courts are all one size, given by an `S`
+in the config field (`2s` → `2sS`) for 1v1, or no flag at all for 2v2.
 
 ## How it works
 
@@ -111,22 +121,26 @@ Everything is in three files:
 
 Given the current session, it produces **one** game:
 
-1. **Sit-outs** — when more players are present than `courts × 4` (or `courts × 2` in
-   singles), the players who have sat out *least* so far sit out this game. Evens the
-   burden over the session.
-2. **Team forming** — random restarts + a local-search swap pass pick the
-   lowest-cost split of the playing players into courts and teams. The cost function
-   penalizes, in priority order:
+1. **Court plan** — `courtPlan` decides each court's size (4 or 2) from the head
+   count and the court count, per the two rules above.
+2. **Sit-outs** — anyone the plan can't seat sits; the players who have sat out
+   *least* so far are chosen, evening the burden over the session.
+3. **Team forming** — random restarts + a local-search swap pass pick the
+   lowest-cost split of the playing players into courts and teams. Swaps are
+   1-for-1, so a mixed plan keeps its shape. The cost function penalizes, in
+   priority order:
    - **Repeated partnerships** (quadratic; recent repeats hurt more) — the core
-     "play with everyone before repeating" rule. Doubles only.
+     "play with everyone before repeating" rule, on the 2v2 courts.
+   - **Hogging the 1v1 court** — scored from how many singles games each player has
+     already had, so the small court rotates.
    - **Skill**, per the active mode:
      - *Spread strong (default):* balance the two teams and **never stack two
        Advanced players** on one team → strong players spread across courts, each
        paired with a weaker one.
      - *Level-based:* keep similar levels on the same court → even, competitive games.
-   - **Repeated opponents** — a mild secondary nudge in doubles. In singles there are
-     no partnerships to vary, so this carries the weight partnerships carry above and
-     becomes the rule that spreads matchups around.
+   - **Repeated opponents** — a mild secondary nudge on a 2v2 court. On a 1v1 court
+     there are no partnerships to vary, so this carries the weight partnerships
+     carry above and becomes the rule that spreads matchups around.
 
 The same function powers "Generate full session" (called N times), "Next game", and
 "Regenerate this game".
@@ -147,9 +161,9 @@ Pure-logic tests, no dependencies:
 node test/generator.test.js
 ```
 
-Covers: partnership variety, sit-out fairness, spread vs. level behavior, the
-long-session saturation case, singles matchup variety and level matching, and edge
-cases (too few players for the format, court capping).
+Covers: the court plan itself, partnership variety, sit-out fairness, spread vs.
+level behavior, the long-session saturation case, mixed 2v2/1v1 games and how the
+1v1 court rotates, and edge cases (fewer than 2 players, court capping).
 
 ## Ideas for later
 
