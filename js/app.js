@@ -139,6 +139,8 @@
     document.querySelectorAll('.view').forEach(function (v) {
       v.classList.toggle('active', v.id === 'view-' + name);
     });
+    // The fixed bottom bar only belongs to the session view.
+    $('#session-bar').hidden = name !== 'session';
     if (name === 'stats') renderStats();
     if (name === 'session') renderSession();
   }
@@ -296,6 +298,7 @@
     return group().players.filter(function (p) { return p.present; }).length;
   }
   function renderCapacityHint() {
+    renderHeader(); // present/court counts live in the header too
     var n = presentCount();
     var courts = group().config.courts;
     var hint = $('#capacity-hint');
@@ -379,12 +382,26 @@
   $('#btn-next').addEventListener('click', nextGame);
   $('#btn-newsession').addEventListener('click', newSession);
 
+  // ---------- render: header ----------
+  function renderHeader() {
+    var g = group();
+    var n = presentCount();
+    var courts = Math.max(1, Math.min(g.config.courts, Math.floor(n / 4) || 1));
+    // textContent: group names can come from an untrusted share link.
+    $('#header-title').textContent = g.name;
+    $('#header-count').textContent = g.games.length + (g.games.length === 1 ? ' game' : ' games');
+    $('#header-meta').textContent =
+      n + ' present · ' + courts + (courts === 1 ? ' court' : ' courts');
+  }
+
   // ---------- render: session ----------
   function renderSession() {
     var container = $('#games-container');
     var games = group().games;
     container.innerHTML = '';
     $('#session-empty').style.display = games.length ? 'none' : 'block';
+
+    renderHeader();
 
     games.forEach(function (game, gi) {
       var card = el('div', 'game-card');
@@ -400,22 +417,23 @@
 
       game.matches.forEach(function (m) {
         var court = el('div', 'court');
-        if (game.matches.length > 1) court.appendChild(el('div', 'court-label', 'Court ' + m.court));
+        court.appendChild(el('div', 'court-label', 'Court ' + m.court));
 
-        var matchup = el('div', 'matchup');
-        var teamA = el('div', 'team a');
+        var floor = el('div', 'court-floor');
+        var sideA = el('div', 'court-side top');
         m.teamA.forEach(function (id) {
-          teamA.appendChild(el('span', 'pl', nameOf(id)));
+          sideA.appendChild(el('span', 'pl light', nameOf(id)));
         });
-        var vs = el('div', 'vs', 'vs');
-        var teamB = el('div', 'team b');
+        var net = el('div', 'court-net');
+        net.appendChild(el('span', null, 'NET'));
+        var sideB = el('div', 'court-side bottom');
         m.teamB.forEach(function (id) {
-          teamB.appendChild(el('span', 'pl', nameOf(id)));
+          sideB.appendChild(el('span', 'pl dark', nameOf(id)));
         });
-        matchup.appendChild(teamA);
-        matchup.appendChild(vs);
-        matchup.appendChild(teamB);
-        court.appendChild(matchup);
+        floor.appendChild(sideA);
+        floor.appendChild(net);
+        floor.appendChild(sideB);
+        court.appendChild(floor);
         card.appendChild(court);
       });
 
@@ -532,23 +550,30 @@
   }
 
   // utf-8-safe, URL-safe base64 (handles accented names etc.)
-  function toB64(str) {
-    var bytes = new TextEncoder().encode(str);
+  function bytesToB64(bytes) {
     var bin = '';
     for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
     return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
-  function fromB64(b64) {
+  function b64ToBytes(b64) {
     b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
     var pad = b64.length % 4;
     if (pad) b64 += '===='.slice(pad);
     var bin = atob(b64);
     var bytes = new Uint8Array(bin.length);
     for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return new TextDecoder().decode(bytes);
+    return bytes;
+  }
+  function toB64(str) {
+    return bytesToB64(new TextEncoder().encode(str));
+  }
+  function fromB64(b64) {
+    return new TextDecoder().decode(b64ToBytes(b64));
   }
 
-  // Compact payload: players carry names, games reference player indices.
+  // ----- v1 (legacy) payload -----
+  // Kept so links shared before the compact format still open. Only used for
+  // encoding as a fallback when the roster is too big for the index alphabet.
   function encodePayload(g) {
     var idx = {};
     g.players.forEach(function (p, i) { idx[p.id] = i; });
@@ -596,6 +621,148 @@
     };
   }
 
+  // ----- v2/v3 packed payload -----
+  // v1 spent most of its bytes on JSON syntax: a single game serialised as
+  // {"m":[[0,1,2,3],[4,5,6,7]],"s":[8,9]} — ~40 chars to carry 10 small ints.
+  // Here each player index is one character, so a match is 4 chars and a game
+  // is ~16. Deflating the result (v3) roughly halves it again; v2 is the same
+  // packing left uncompressed for browsers without CompressionStream.
+  var IDX = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+  // Names are user text and may contain our delimiters, so escape those three.
+  function esc(s) {
+    return String(s).replace(/\\/g, '\\\\').replace(/\|/g, '\\p').replace(/,/g, '\\c');
+  }
+  function unesc(s) {
+    return s.replace(/\\(.)/g, function (_, c) {
+      return c === 'p' ? '|' : c === 'c' ? ',' : c;
+    });
+  }
+
+  function packPayload(g) {
+    var idx = {};
+    g.players.forEach(function (p, i) { idx[p.id] = i; });
+    function ch(id) { return IDX[idx[id]] || IDX[0]; }
+
+    // skill (1-3) and presence ride together in one character.
+    var attrs = g.players.map(function (p) {
+      var skill = p.skill >= 1 && p.skill <= 3 ? p.skill : 2;
+      return IDX[skill * 2 + (p.present ? 1 : 0)];
+    }).join('');
+
+    var games = (g.games || []).map(function (game) {
+      var m = game.matches.map(function (x) {
+        return ch(x.teamA[0]) + ch(x.teamA[1]) + ch(x.teamB[0]) + ch(x.teamB[1]);
+      }).join('');
+      return m + '.' + (game.sitOuts || []).map(ch).join('');
+    }).join(',');
+
+    return [
+      esc(g.name || ''),
+      String(g.config.courts) + (g.config.mode === 'level' ? 'l' : 's'),
+      g.players.map(function (p) { return esc(p.name); }).join(','),
+      attrs,
+      games,
+    ].join('|');
+  }
+
+  function unpackPayload(str) {
+    var parts = str.split('|');
+    if (parts.length < 5) return null;
+    var names = parts[2] === '' ? [] : parts[2].split(',');
+    var attrs = parts[3];
+    var players = names.map(function (n, i) {
+      var a = IDX.indexOf(attrs[i]);
+      if (a < 0) a = 5; // skill 2, present
+      return { id: 'p' + i, name: unesc(n), skill: Math.floor(a / 2), present: a % 2 === 1 };
+    });
+    if (!players.length) return null;
+
+    function byIndex(c) {
+      var i = IDX.indexOf(c);
+      return players[i] ? players[i].id : players[0].id;
+    }
+    var courts = parseInt(parts[1], 10);
+    var games = parts[4] === '' ? [] : parts[4].split(',');
+
+    return {
+      id: '',
+      name: unesc(parts[0]) || 'Shared roster',
+      config: {
+        courts: courts >= 1 && courts <= 6 ? courts : 2,
+        mode: parts[1].slice(-1) === 'l' ? 'level' : 'spread',
+        games: 10,
+      },
+      players: players,
+      games: games.map(function (chunk, gi) {
+        var half = chunk.split('.');
+        var m = half[0] || '';
+        var matches = [];
+        for (var i = 0; i + 4 <= m.length; i += 4) {
+          matches.push({
+            court: matches.length + 1,
+            teamA: [byIndex(m[i]), byIndex(m[i + 1])],
+            teamB: [byIndex(m[i + 2]), byIndex(m[i + 3])],
+          });
+        }
+        return { index: gi, matches: matches, sitOuts: (half[1] || '').split('').map(byIndex) };
+      }),
+    };
+  }
+
+  // deflate-raw via CompressionStream; resolves null where it isn't supported.
+  function deflate(bytes) {
+    if (typeof CompressionStream === 'undefined') return Promise.resolve(null);
+    try {
+      var cs = new CompressionStream('deflate-raw');
+      var w = cs.writable.getWriter();
+      w.write(bytes);
+      w.close();
+      return new Response(cs.readable).arrayBuffer().then(
+        function (buf) { return new Uint8Array(buf); },
+        function () { return null; }
+      );
+    } catch (e) {
+      return Promise.resolve(null);
+    }
+  }
+  function inflate(bytes) {
+    var ds = new DecompressionStream('deflate-raw');
+    var w = ds.writable.getWriter();
+    w.write(bytes);
+    w.close();
+    return new Response(ds.readable).arrayBuffer().then(function (buf) {
+      return new TextDecoder().decode(buf);
+    });
+  }
+
+  // Returns the value that goes after '#s=' — a one-char format marker plus
+  // base64. Legacy v1 links are unmarked and always start with 'e' (base64 of
+  // '{"v"...'), so '2'/'3' can never be mistaken for one.
+  function encodeShareHash(g) {
+    if (g.players.length > IDX.length) {
+      return Promise.resolve(encodePayload(g)); // v1: more players than index chars
+    }
+    var packed = packPayload(g);
+    var raw = new TextEncoder().encode(packed);
+    return deflate(raw).then(function (z) {
+      return z && z.length < raw.length ? '3' + bytesToB64(z) : '2' + bytesToB64(raw);
+    });
+  }
+
+  // Never throws synchronously — malformed base64 and unsupported formats all
+  // surface as a rejected promise for the caller's single error path.
+  function decodeShareHash(h) {
+    try {
+      var marker = h[0];
+      if (marker === '2') return Promise.resolve(unpackPayload(fromB64(h.slice(1))));
+      if (marker === '3') return inflate(b64ToBytes(h.slice(1))).then(unpackPayload);
+      return Promise.resolve(decodePayload(h));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+
   function copyText(text) {
     if (navigator.clipboard && window.isSecureContext) {
       return navigator.clipboard.writeText(text);
@@ -615,6 +782,21 @@
       }
       document.body.removeChild(ta);
     });
+  }
+
+  // Encoding the link is async, and Safari revokes the user activation that
+  // permits a clipboard write across an await — so hand ClipboardItem the
+  // pending promise instead of awaiting it ourselves where that's supported.
+  function copyTextAsync(textPromise) {
+    if (navigator.clipboard && navigator.clipboard.write && window.ClipboardItem && window.isSecureContext) {
+      try {
+        var blobP = textPromise.then(function (t) { return new Blob([t], { type: 'text/plain' }); });
+        return navigator.clipboard.write([new ClipboardItem({ 'text/plain': blobP })]);
+      } catch (e) {
+        /* ClipboardItem without promise support — fall through */
+      }
+    }
+    return textPromise.then(copyText);
   }
 
   function shareRoster() {
@@ -642,8 +824,9 @@
       toast('Generate a session first.');
       return;
     }
-    var link = location.origin + location.pathname + '#s=' + encodePayload(g);
-    copyText(link).then(
+    var base = location.origin + location.pathname;
+    var linkP = encodeShareHash(g).then(function (h) { return base + '#s=' + h; });
+    copyTextAsync(linkP).then(
       function () { toast('Link copied — paste it to share'); },
       function () { toast('Could not copy link'); }
     );
@@ -661,20 +844,18 @@
     history.replaceState(null, '', location.pathname + location.search);
   }
 
-  function tryBootShared() {
-    var h = location.hash || '';
-    if (h.indexOf('#s=') !== 0) return false;
-    var g;
-    try {
-      g = decodePayload(h.slice(3));
-    } catch (e) {
-      g = null;
-    }
-    if (!g || !g.players.length) {
-      toast('That shared link looks invalid.');
-      clearHash();
-      return false;
-    }
+  function bootShared(hash) {
+    return decodeShareHash(hash).catch(function () { return null; }).then(function (g) {
+      if (!g || !g.players.length) {
+        toast('That shared link looks invalid.');
+        clearHash();
+        return false;
+      }
+      return showShared(g);
+    });
+  }
+
+  function showShared(g) {
     g.id = gid();
     sharedCtx = { active: true, tempId: g.id, prevActiveId: state.activeGroupId };
     state.groups.push(g); // in memory only — not saved
@@ -727,10 +908,18 @@
     renderCapacityHint();
     renderSession();
   }
-  if (tryBootShared()) {
-    // Viewing a shared link: rendered read-only, nothing persisted.
-  } else {
+  function bootNormal() {
     refreshAll();
     save(); // persist the v2 store on first boot (e.g. right after a legacy migration)
+  }
+
+  var hash = location.hash || '';
+  if (hash.indexOf('#s=') === 0) {
+    // Viewing a shared link: rendered read-only, nothing persisted.
+    bootShared(hash.slice(3)).then(function (ok) {
+      if (!ok) bootNormal();
+    });
+  } else {
+    bootNormal();
   }
 })();
