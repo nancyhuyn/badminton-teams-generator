@@ -49,6 +49,24 @@ From the **Session** tab (no backend, no screenshots needed):
   **Save a copy** to keep it as their own group or **Exit** to go back to their data.
   Merely opening a shared link never touches the viewer's saved groups.
 
+### Link format
+
+Because the roster travels in the URL itself, the hash is packed hard: player
+indices are single characters (a match is 4 chars, a game ~16) and the result is
+deflate-compressed before base64. A 16-player, 10-game session comes out around
+270 characters of hash instead of ~1,100.
+
+The hash carries a one-character format marker:
+
+| Marker | Format |
+| --- | --- |
+| `3` | packed + deflate-raw (normal case) |
+| `2` | packed, uncompressed — browsers without `CompressionStream` |
+| none | legacy JSON payload; still decoded so old links keep working |
+
+Rosters larger than 64 players fall back to the legacy format, since the index
+alphabet is 64 characters wide.
+
 ## How it works
 
 Everything is in three files:
