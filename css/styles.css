@@ -468,6 +468,85 @@ input[type="checkbox"] {
   background: var(--pill-dark);
   color: var(--pill-dark-ink);
 }
+/* The winning side is ringed on the court itself, so a glance at the card
+   tells you the result without reading the strip below. */
+.court-side.won .pl {
+  box-shadow: 0 0 0 2px var(--court), 0 0 0 4px var(--brand);
+}
+.result-chip {
+  margin-left: 0.5rem;
+  background: var(--brand);
+  color: var(--brand-ink);
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  letter-spacing: 0.04em;
+}
+
+/* score + winner controls, sitting inside the court below the floor */
+.court-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+.score-pair,
+.win-pair {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+/* Element+class, to outrank the base `input:not([type=checkbox])` rule: on the
+   court these are transparent-on-blue, not page-surface inputs. */
+.court-result input.score-input {
+  width: 3.1rem;
+  max-width: 3.1rem;
+  padding: 0.3rem 0.2rem;
+  min-height: 40px;
+  text-align: center;
+  font-weight: 700;
+  color: var(--court-ink);
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid var(--court-line);
+  border-radius: var(--radius-sm);
+  -moz-appearance: textfield;
+}
+.score-input::-webkit-outer-spin-button,
+.score-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.court-result input.score-input::placeholder {
+  color: var(--court-ink);
+  opacity: 0.55;
+}
+.score-dash,
+.win-label {
+  color: var(--court-ink);
+  opacity: 0.75;
+  font-size: 0.8rem;
+}
+.win-btn {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--court-ink);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--court-line);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+.win-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+.win-btn.active {
+  background: var(--brand);
+  color: var(--brand-ink);
+  border-color: var(--brand);
+}
+
 .sit-outs {
   margin-top: 0.6rem;
   font-size: 0.82rem;

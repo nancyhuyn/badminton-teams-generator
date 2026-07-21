@@ -127,6 +127,10 @@
     var gamesPlayed = {}; // id -> count
     var sitOuts = {}; // id -> count
     var singlesPlayed = {}; // id -> count of 1v1 games (drives auto's rotation)
+    var wins = {}; // id -> count (only counts matches with a recorded result)
+    var losses = {}; // id -> count
+    var pointsFor = {}; // id -> total points scored by their side
+    var pointsAgainst = {}; // id -> total points conceded
 
     function bump(map, a, b, idx) {
       var k = pairKey(a, b);
@@ -155,6 +159,25 @@
             bump(opponent, a, b, g);
           });
         });
+        // Results are optional: a match only counts toward W/L once someone
+        // has recorded one, so an unplayed schedule reports all zeroes.
+        var won = winnerOf(m);
+        if (won) {
+          var winTeam = won === 'A' ? m.teamA : m.teamB;
+          var loseTeam = won === 'A' ? m.teamB : m.teamA;
+          winTeam.forEach(function (id) { wins[id] = (wins[id] || 0) + 1; });
+          loseTeam.forEach(function (id) { losses[id] = (losses[id] || 0) + 1; });
+        }
+        if (hasScore(m)) {
+          m.teamA.forEach(function (id) {
+            pointsFor[id] = (pointsFor[id] || 0) + m.score[0];
+            pointsAgainst[id] = (pointsAgainst[id] || 0) + m.score[1];
+          });
+          m.teamB.forEach(function (id) {
+            pointsFor[id] = (pointsFor[id] || 0) + m.score[1];
+            pointsAgainst[id] = (pointsAgainst[id] || 0) + m.score[0];
+          });
+        }
       });
     }
     return {
@@ -163,8 +186,28 @@
       gamesPlayed: gamesPlayed,
       sitOuts: sitOuts,
       singlesPlayed: singlesPlayed,
+      wins: wins,
+      losses: losses,
+      pointsFor: pointsFor,
+      pointsAgainst: pointsAgainst,
       nextIndex: limit,
     };
+  }
+
+  // ---------- results ----------
+
+  function hasScore(m) {
+    return !!m.score && typeof m.score[0] === 'number' && typeof m.score[1] === 'number';
+  }
+
+  /*
+   * Which side won: 'A', 'B', or null if unrecorded. A score decides the match
+   * on its own, so entering 21-15 needs no extra tap; an explicit m.winner
+   * covers "we didn't count, they just won". A tied score is not a result.
+   */
+  function winnerOf(m) {
+    if (hasScore(m) && m.score[0] !== m.score[1]) return m.score[0] > m.score[1] ? 'A' : 'B';
+    return m.winner === 'A' || m.winner === 'B' ? m.winner : null;
   }
 
   // ---------- scoring ----------
@@ -401,6 +444,8 @@
     generateGame: generateGame,
     courtPlan: courtPlan,
     deriveStats: deriveStats,
+    winnerOf: winnerOf,
+    hasScore: hasScore,
     pairKey: pairKey,
     WEIGHTS: W,
     STRONG_TIER: STRONG_TIER,

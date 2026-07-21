@@ -79,6 +79,9 @@
       delete g.config.format; // pre-mixed-courts saves pinned a format; now derived
 
       g.games = g.games || [];
+      g.games.forEach(function (game) {
+        (game.matches || []).forEach(normalizeResult);
+      });
       g.players = (g.players || []).map(function (p) {
         return { id: p.id || uid(), name: p.name, skill: p.skill || 2, present: p.present !== false };
       });
@@ -87,6 +90,33 @@
       s.activeGroupId = s.groups[0].id;
     }
     return s;
+  }
+
+  /*
+   * Results are user-entered and can also arrive from a share link, so drop
+   * anything that isn't a clean 'A'/'B' or a pair of scores.
+   *
+   * One side of a score may be null: you type 21, and until you've filled in
+   * the other box the match simply has no result yet (BadmintonGen.hasScore
+   * wants both). Storing the half is what lets the field keep what you typed.
+   */
+  function normalizeResult(m) {
+    if (m.winner !== 'A' && m.winner !== 'B') delete m.winner;
+    if (!Array.isArray(m.score)) {
+      delete m.score;
+      return m;
+    }
+    var a = scoreVal(m.score[0]);
+    var b = scoreVal(m.score[1]);
+    if (a === null && b === null) delete m.score;
+    else m.score = [a, b];
+    return m;
+  }
+  function scoreVal(v) {
+    if (v === null || v === undefined || v === '') return null;
+    var n = typeof v === 'number' ? v : parseInt(v, 10);
+    if (isNaN(n) || n < 0 || n > 99) return null;
+    return n;
   }
 
   function save() {
@@ -433,28 +463,7 @@
       card.appendChild(head);
 
       game.matches.forEach(function (m) {
-        var court = el('div', 'court');
-        court.appendChild(el('div', 'court-label', 'Court ' + m.court));
-
-        var floor = el('div', 'court-floor');
-        // '.solo' centres a lone player instead of leaving them in the left
-        // column of the two-up doubles grid.
-        var solo = m.teamA.length === 1 ? ' solo' : '';
-        var sideA = el('div', 'court-side top' + solo);
-        m.teamA.forEach(function (id) {
-          sideA.appendChild(el('span', 'pl light', nameOf(id)));
-        });
-        var net = el('div', 'court-net');
-        net.appendChild(el('span', null, 'NET'));
-        var sideB = el('div', 'court-side bottom' + (m.teamB.length === 1 ? ' solo' : ''));
-        m.teamB.forEach(function (id) {
-          sideB.appendChild(el('span', 'pl dark', nameOf(id)));
-        });
-        floor.appendChild(sideA);
-        floor.appendChild(net);
-        floor.appendChild(sideB);
-        court.appendChild(floor);
-        card.appendChild(court);
+        card.appendChild(buildCourt(m));
       });
 
       if (game.sitOuts && game.sitOuts.length) {
@@ -467,6 +476,132 @@
       }
       container.appendChild(card);
     });
+  }
+
+  /*
+   * One court: the diagram, plus the strip for recording who won.
+   *
+   * There are two ways to record a result, because both happen in a real
+   * session: type the score, or just tap the side that won. They share one
+   * source of truth — a decisive score always decides the match
+   * (BadmintonGen.winnerOf), so tapping a winner that contradicts the score
+   * clears the score rather than leaving the court showing two answers.
+   *
+   * Recording a result repaints THIS court in place rather than re-rendering
+   * the session: a full re-render would tear out the input the user tabbed or
+   * clicked into (a score input commits on change, i.e. as focus leaves), and
+   * their next keystrokes would land on a detached node.
+   */
+  function buildCourt(m) {
+    var court = el('div', 'court');
+    var label = el('div', 'court-label', 'Court ' + m.court);
+    var chip = el('span', 'result-chip');
+    label.appendChild(chip);
+    court.appendChild(label);
+
+    var floor = el('div', 'court-floor');
+    // '.solo' centres a lone player instead of leaving them in the left
+    // column of the two-up doubles grid.
+    var sideA = el('div', 'court-side top' + (m.teamA.length === 1 ? ' solo' : ''));
+    m.teamA.forEach(function (id) {
+      sideA.appendChild(el('span', 'pl light', nameOf(id)));
+    });
+    var net = el('div', 'court-net');
+    net.appendChild(el('span', null, 'NET'));
+    var sideB = el('div', 'court-side bottom' + (m.teamB.length === 1 ? ' solo' : ''));
+    m.teamB.forEach(function (id) {
+      sideB.appendChild(el('span', 'pl dark', nameOf(id)));
+    });
+    floor.appendChild(sideA);
+    floor.appendChild(net);
+    floor.appendChild(sideB);
+    court.appendChild(floor);
+
+    var inputs = [scoreBox(0), scoreBox(1)];
+    var btnA = winBtn('A', 'Top');
+    var btnB = winBtn('B', 'Bottom');
+
+    var scores = el('div', 'score-pair');
+    scores.appendChild(inputs[0]);
+    scores.appendChild(el('span', 'score-dash', '–'));
+    scores.appendChild(inputs[1]);
+    var wins = el('div', 'win-pair');
+    wins.appendChild(btnA);
+    wins.appendChild(el('span', 'win-label', 'won'));
+    wins.appendChild(btnB);
+
+    var row = el('div', 'court-result');
+    row.appendChild(scores);
+    row.appendChild(wins);
+    court.appendChild(row);
+    paint();
+    return court;
+
+    // Reflect the match's current result onto the nodes we already built.
+    function paint() {
+      var won = BadmintonGen.winnerOf(m);
+      sideA.classList.toggle('won', won === 'A');
+      sideB.classList.toggle('won', won === 'B');
+      btnA.classList.toggle('active', won === 'A');
+      btnB.classList.toggle('active', won === 'B');
+      // Name the winners so the chip reads as an answer to the question the
+      // strip asks rather than echoing the top/bottom labels on the buttons.
+      var winners = won === 'A' ? m.teamA : m.teamB;
+      var text = won ? winners.map(nameOf).join(' & ') + ' won' : '';
+      if (won && BadmintonGen.hasScore(m)) text += ' ' + m.score[0] + '–' + m.score[1];
+      chip.textContent = text;
+      chip.hidden = !won;
+      inputs.forEach(function (inp, i) {
+        var v = m.score && typeof m.score[i] === 'number' ? String(m.score[i]) : '';
+        // Never clobber a field mid-edit — and an unfilled side stays empty
+        // rather than being helpfully turned into a 0 the user then types into.
+        if (document.activeElement !== inp && inp.value !== v) inp.value = v;
+      });
+    }
+
+    function commit() {
+      normalizeResult(m);
+      save();
+      paint();
+    }
+
+    function scoreBox(side) {
+      var inp = el('input', 'score-input');
+      inp.type = 'number';
+      inp.min = '0';
+      inp.max = '99';
+      inp.inputMode = 'numeric';
+      inp.placeholder = '–';
+      inp.setAttribute('aria-label', 'Score for the ' + (side === 0 ? 'top' : 'bottom') + ' team');
+      inp.addEventListener('change', function () {
+        var mine = scoreVal(inp.value);
+        var theirs = scoreVal(inputs[1 - side].value);
+        if (mine === null && theirs === null) delete m.score;
+        else m.score = side === 0 ? [mine, theirs] : [theirs, mine];
+        // Once the score decides the match, a stale tapped-in winner must go.
+        if (BadmintonGen.hasScore(m) && m.score[0] !== m.score[1]) delete m.winner;
+        commit();
+      });
+      return inp;
+    }
+
+    function winBtn(side, text) {
+      var b = el('button', 'win-btn', text);
+      b.type = 'button';
+      b.title = 'Mark the ' + text.toLowerCase() + ' team as the winner';
+      b.addEventListener('click', function () {
+        if (BadmintonGen.winnerOf(m) === side) {
+          delete m.winner; // tapping the winner again clears the result
+          delete m.score;
+        } else {
+          m.winner = side;
+          // Don't leave a score on court that contradicts the tap.
+          if (BadmintonGen.hasScore(m) && (m.score[0] > m.score[1] ? 'A' : 'B') !== side) delete m.score;
+        }
+        commit();
+      });
+      return b;
+    }
   }
 
   // ---------- render: stats ----------
@@ -487,12 +622,21 @@
     hr.appendChild(thCell('Player', true));
     hr.appendChild(thCell('Games'));
     hr.appendChild(thCell('Sat out'));
+    hr.appendChild(thCell('W'));
+    hr.appendChild(thCell('L'));
+    hr.appendChild(thCell('Win %'));
     t1.appendChild(hr);
     players.forEach(function (p) {
+      var w = stats.wins[p.id] || 0;
+      var l = stats.losses[p.id] || 0;
       var tr = el('tr');
       tr.appendChild(tdName(p.name));
       tr.appendChild(tdCell(stats.gamesPlayed[p.id] || 0));
       tr.appendChild(tdCell(stats.sitOuts[p.id] || 0));
+      tr.appendChild(tdCell(w));
+      tr.appendChild(tdCell(l));
+      // '—' rather than 0% while nobody has recorded a result yet.
+      tr.appendChild(tdCell(w + l ? Math.round((w / (w + l)) * 100) + '%' : '—'));
       t1.appendChild(tr);
     });
     wrap1.innerHTML = '';
@@ -561,7 +705,11 @@
         var a = m.teamA.map(function (id) { return nameFrom(g.players, id); }).join(' & ');
         var b = m.teamB.map(function (id) { return nameFrom(g.players, id); }).join(' & ');
         var prefix = game.matches.length > 1 ? '  Court ' + m.court + ': ' : '  ';
-        lines.push(prefix + a + '  vs  ' + b);
+        var line = prefix + a + '  vs  ' + b;
+        if (BadmintonGen.hasScore(m)) line += '  (' + m.score[0] + '–' + m.score[1] + ')';
+        var won = BadmintonGen.winnerOf(m);
+        if (won) line += '  🏆 ' + (won === 'A' ? a : b);
+        lines.push(line);
       });
       if (game.sitOuts && game.sitOuts.length) {
         lines.push('  Sitting out: ' + game.sitOuts.map(function (id) { return nameFrom(g.players, id); }).join(', '));
@@ -585,76 +733,13 @@
     for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return bytes;
   }
-  function toB64(str) {
-    return bytesToB64(new TextEncoder().encode(str));
-  }
   function fromB64(b64) {
     return new TextDecoder().decode(b64ToBytes(b64));
   }
 
-  // ----- v1 (legacy) payload -----
-  // Kept so links shared before the compact format still open. Only used for
-  // encoding as a fallback when the roster is too big for the index alphabet.
-  function encodePayload(g) {
-    var idx = {};
-    g.players.forEach(function (p, i) { idx[p.id] = i; });
-    var payload = {
-      v: 1,
-      n: g.name || '',
-      p: g.players.map(function (p) { return [p.name, p.skill, p.present ? 1 : 0]; }),
-      c: [g.config.courts, g.config.mode === 'level' ? 'l' : 's'],
-      g: (g.games || []).map(function (game) {
-        return {
-          // teamA then teamB, flattened — 2 entries for a 1v1 court, 4 for a
-          // 2v2, so the length tells the decoder which kind of court this is.
-          m: game.matches.map(function (m) {
-            return m.teamA.concat(m.teamB).map(function (id) { return idx[id]; });
-          }),
-          s: (game.sitOuts || []).map(function (id) { return idx[id]; }),
-        };
-      }),
-    };
-    return toB64(JSON.stringify(payload));
-  }
-  function decodePayload(b64) {
-    var payload = JSON.parse(fromB64(b64));
-    if (!payload || !Array.isArray(payload.p)) return null;
-    var players = payload.p.map(function (a, i) {
-      return { id: 'p' + i, name: String(a[0]), skill: a[1] || 2, present: a[2] !== 0 };
-    });
-    function byIndex(i) { return players[i] ? players[i].id : players[0].id; }
-    var games = (payload.g || []).map(function (game, gi) {
-      return {
-        index: gi,
-        matches: (game.m || []).map(function (m, ci) {
-          var half = m.length === 2 ? 1 : 2; // 2 entries -> 1v1, 4 -> 2v2
-          return {
-            court: ci + 1,
-            teamA: m.slice(0, half).map(byIndex),
-            teamB: m.slice(half, half * 2).map(byIndex),
-          };
-        }),
-        sitOuts: (game.s || []).map(byIndex),
-      };
-    });
-    return {
-      id: '',
-      name: payload.n || 'Shared roster',
-      config: {
-        courts: (payload.c && payload.c[0]) || 2,
-        mode: payload.c && payload.c[1] === 'l' ? 'level' : 'spread',
-        games: 10,
-      },
-      players: players,
-      games: games,
-    };
-  }
-
   // ----- v2/v3 packed payload -----
-  // v1 spent most of its bytes on JSON syntax: a single game serialised as
-  // {"m":[[0,1,2,3],[4,5,6,7]],"s":[8,9]} — ~40 chars to carry 10 small ints.
-  // Here each player index is one character, so a match is 4 chars and a game
-  // is ~16. Deflating the result (v3) roughly halves it again; v2 is the same
+  // Each player index is one character, so a match is 4 chars and a game is
+  // ~16. Deflating the result (v3) roughly halves it again; v2 is the same
   // packing left uncompressed for browsers without CompressionStream.
   var IDX = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
@@ -689,7 +774,16 @@
       var m = game.matches.map(function (x) {
         return x.teamA.concat(x.teamB).map(ch).join('');
       }).join('');
-      return sizes + ':' + m + '.' + (game.sitOuts || []).map(ch).join('');
+      // Results ride in an optional trailing ';' section, one '/'-separated
+      // token per court: '21-15' for a score, 'A'/'B' for a tapped-in winner,
+      // empty for a game nobody recorded. Omitted entirely when unplayed, so
+      // a freshly generated schedule encodes exactly as small as it used to.
+      var res = game.matches.map(function (x) {
+        if (BadmintonGen.hasScore(x)) return x.score[0] + '-' + x.score[1];
+        return x.winner === 'A' || x.winner === 'B' ? x.winner : '';
+      });
+      var tail = res.some(function (t) { return t; }) ? ';' + res.join('/') : '';
+      return sizes + ':' + m + '.' + (game.sitOuts || []).map(ch).join('') + tail;
     }).join(',');
 
     // Config field: courts, then mode ('l'/'s').
@@ -700,6 +794,19 @@
       attrs,
       games,
     ].join('|');
+  }
+
+  // Inverse of the result token written by packPayload. Anything unexpected is
+  // simply left unrecorded — normalizeResult is the backstop for bad values.
+  function applyResult(m, token) {
+    if (!token) return m;
+    if (token === 'A' || token === 'B') {
+      m.winner = token;
+      return m;
+    }
+    var bits = token.split('-');
+    if (bits.length === 2) m.score = [parseInt(bits[0], 10), parseInt(bits[1], 10)];
+    return m;
   }
 
   /*
@@ -736,8 +843,11 @@
       },
       players: players,
       games: games.map(function (chunk, gi) {
-        // "<sizes>:<matchchars>.<sitouts>", or "<matchchars>.<sitouts>" on a
-        // legacy link, where every court was the same fixed width.
+        // "<sizes>:<matchchars>.<sitouts>[;<results>]", or, on a legacy link,
+        // "<matchchars>.<sitouts>" where every court was the same fixed width.
+        var semi = chunk.indexOf(';');
+        var results = semi < 0 ? [] : chunk.slice(semi + 1).split('/');
+        if (semi >= 0) chunk = chunk.slice(0, semi);
         var colon = chunk.indexOf(':');
         var sizes;
         if (legacyPer && colon < 0) {
@@ -752,14 +862,14 @@
         var m = half[0] || '';
         var matches = [];
         var i = 0;
-        sizes.forEach(function (size) {
+        sizes.forEach(function (size, ci) {
           if (size !== 2 && size !== 4) return; // ignore anything malformed
           if (i + size > m.length) return;
-          matches.push({
+          matches.push(normalizeResult(applyResult({
             court: matches.length + 1,
             teamA: m.slice(i, i + size / 2).split('').map(byIndex),
             teamB: m.slice(i + size / 2, i + size).split('').map(byIndex),
-          });
+          }, results[ci])));
           i += size;
         });
         return { index: gi, matches: matches, sitOuts: (half[1] || '').split('').map(byIndex) };
@@ -794,18 +904,19 @@
   }
 
   // Returns the value that goes after '#s=' — a one-char format marker plus
-  // base64. Legacy v1 links are unmarked and always start with 'e' (base64 of
-  // '{"v"...'), so a digit marker can never be mistaken for one.
-  //   4/5 — packed / deflated, per-court sizes (current)
-  //   2/3 — the same, back when a whole schedule was one fixed format
+  // base64. Every marker is a digit; the packed format uses one index char per
+  // player, so a roster larger than the alphabet can't be encoded.
+  //   6/7 — packed / deflated, with match results (current)
+  //   4/5 — the same without results; still decoded by the same unpacker
+  //   2/3 — the same again, back when a whole schedule was one fixed format
   function encodeShareHash(g) {
     if (g.players.length > IDX.length) {
-      return Promise.resolve(encodePayload(g)); // v1: more players than index chars
+      return Promise.reject(new Error('Too many players to share'));
     }
     var packed = packPayload(g);
     var raw = new TextEncoder().encode(packed);
     return deflate(raw).then(function (z) {
-      return z && z.length < raw.length ? '5' + bytesToB64(z) : '4' + bytesToB64(raw);
+      return z && z.length < raw.length ? '7' + bytesToB64(z) : '6' + bytesToB64(raw);
     });
   }
 
@@ -814,8 +925,8 @@
   function decodeShareHash(h) {
     try {
       var marker = h[0];
-      if (marker === '4') return Promise.resolve(unpackPayload(fromB64(h.slice(1))));
-      if (marker === '5') return inflate(b64ToBytes(h.slice(1))).then(function (s) {
+      if (marker === '4' || marker === '6') return Promise.resolve(unpackPayload(fromB64(h.slice(1))));
+      if (marker === '5' || marker === '7') return inflate(b64ToBytes(h.slice(1))).then(function (s) {
         return unpackPayload(s);
       });
       // Legacy packed links: the fixed match width lives in the config flags.
@@ -829,7 +940,7 @@
       if (marker === '3') return inflate(b64ToBytes(h.slice(1))).then(function (s) {
         return unpackPayload(s, legacyPer(s));
       });
-      return Promise.resolve(decodePayload(h));
+      return Promise.resolve(null);
     } catch (e) {
       return Promise.reject(e);
     }

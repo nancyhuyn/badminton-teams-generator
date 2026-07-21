@@ -353,5 +353,41 @@ section('Edge cases');
 })();
 
 // ---------------------------------------------------------------------------
+section('Match results: winner, scores, and W/L stats');
+(function () {
+  ok(G.winnerOf({ teamA: ['p0'], teamB: ['p1'] }) === null, 'no result recorded -> null');
+  ok(G.winnerOf({ teamA: ['p0'], teamB: ['p1'], winner: 'B' }) === 'B', 'explicit winner is used');
+  ok(G.winnerOf({ teamA: ['p0'], teamB: ['p1'], score: [21, 15] }) === 'A', 'a score decides the match');
+  ok(
+    G.winnerOf({ teamA: ['p0'], teamB: ['p1'], score: [15, 21], winner: 'A' }) === 'B',
+    'a decisive score outranks a stale explicit winner'
+  );
+  ok(G.winnerOf({ teamA: ['p0'], teamB: ['p1'], score: [10, 10] }) === null, 'a tie is not a result');
+  ok(!G.hasScore({ teamA: ['p0'], teamB: ['p1'], score: [21] }), 'a half-filled score is not a score');
+
+  var games = [
+    {
+      index: 0,
+      matches: [{ court: 1, teamA: ['p0', 'p1'], teamB: ['p2', 'p3'], score: [21, 17] }],
+      sitOuts: [],
+    },
+    {
+      index: 1,
+      matches: [{ court: 1, teamA: ['p0', 'p2'], teamB: ['p1', 'p3'], winner: 'B' }],
+      sitOuts: [],
+    },
+    // no result on this one — it should count as a game played but not a loss
+    { index: 2, matches: [{ court: 1, teamA: ['p0', 'p3'], teamB: ['p1', 'p2'] }], sitOuts: [] },
+  ];
+  var st = G.deriveStats(games);
+  ok(st.wins.p0 === 1 && st.losses.p0 === 1, 'p0: won game 1, lost game 2');
+  ok(st.wins.p1 === 2 && !st.losses.p1, 'p1: won both recorded games');
+  ok(st.gamesPlayed.p0 === 3, 'unrecorded games still count as played');
+  ok((st.wins.p2 || 0) + (st.losses.p2 || 0) === 2, 'only recorded matches reach W/L');
+  ok(st.pointsFor.p0 === 21 && st.pointsAgainst.p0 === 17, 'points tracked per side');
+  ok(!st.pointsFor.p3 || st.pointsFor.p3 === 17, 'losing side keeps its own points');
+})();
+
+// ---------------------------------------------------------------------------
 console.log('\n' + (failed === 0 ? '✓ ALL PASSED' : '✗ FAILURES') + ' — ' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed === 0 ? 0 : 1);
