@@ -5,13 +5,12 @@
  * State model (v2): the app holds a list of named GROUPS (saved rosters you
  * play with repeatedly). Each group carries its own players, settings, and
  * current schedule, so switching groups swaps the whole view. One group is
- * active at a time. Older single-session saves are migrated in automatically.
+ * active at a time.
  */
 (function () {
   'use strict';
 
   var STORAGE_KEY = 'badminton-app-v2';
-  var OLD_KEY = 'badminton-session-v1';
   var SKILL_LABEL = { 1: 'Beginner', 2: 'Intermediate', 3: 'Advanced' };
 
   // ---------- state ----------
@@ -37,32 +36,12 @@
   }
 
   function loadState() {
-    // Preferred: the v2 multi-group store.
+    // The v2 multi-group store.
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         var s = JSON.parse(raw);
         if (s && s.groups && s.groups.length) return normalize(s);
-      }
-    } catch (e) {
-      /* fall through */
-    }
-    // Migrate a legacy single session into a "My group".
-    try {
-      var old = localStorage.getItem(OLD_KEY);
-      if (old) {
-        var os = JSON.parse(old);
-        var g = newGroupObj('My group');
-        g.players = (os.players || []).map(function (p) {
-          return { id: p.id || uid(), name: p.name, skill: p.skill, present: p.present !== false };
-        });
-        g.config = {
-          courts: (os.config && os.config.courts) || 2,
-          mode: (os.config && os.config.mode) || 'spread',
-          games: 10,
-        };
-        g.games = os.games || [];
-        return { groups: [g], activeGroupId: g.id };
       }
     } catch (e) {
       /* fall through */
@@ -1093,7 +1072,7 @@
   }
   function bootNormal() {
     refreshAll();
-    save(); // persist the v2 store on first boot (e.g. right after a legacy migration)
+    save(); // persist the v2 store on first boot
   }
 
   var hash = location.hash || '';
